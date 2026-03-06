@@ -1,0 +1,8 @@
+{
+  "mode": "strict",
+  "note_text": "55-year-old male with history of hypertension and type 2 diabetes. BP 148/92. Started lisinopril 10mg daily. Follow-up in 4 weeks.",
+  "question": "What is the cardiovascular risk profile and recommended next steps?",
+  "user_context": {
+    "lang": "en"
+  }
+}

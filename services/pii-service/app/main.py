@@ -1,7 +1,9 @@
 import os
+from typing import List
 
 from fastapi import FastAPI
 
+from services.shared.logging_util import set_trace_id, structured_log_middleware
 from services.shared.schemas_v1 import (
     HealthResponse,
     PIISpan,
@@ -11,6 +13,7 @@ from services.shared.schemas_v1 import (
 
 
 app = FastAPI(title="PII Redaction Service", version="0.1.0")
+app.add_middleware(structured_log_middleware("pii-service"))
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -21,20 +24,26 @@ async def health() -> HealthResponse:
 @app.post("/v1/redact", response_model=RedactResponse)
 async def redact(request: RedactRequest) -> RedactResponse:
     """
-    Stubbed PII redaction.
-
-    Simply wraps the full text in a placeholder and returns a single fake span.
+    Stub PII redaction: returns redacted text with placeholder spans.
+    Accepts RedactRequest, returns RedactResponse; preserves trace_id.
     """
-    fake_span = PIISpan(
-        type="NAME",
-        start=0,
-        end=min(len(request.text), 10),
-        replacement="[NAME]",
-    )
+    set_trace_id(request.trace_id)
+
+    # Realistic placeholder: redacted sentence + 1–2 spans
+    text = request.text or ""
+    spans: List[PIISpan] = [
+        PIISpan(type="NAME", start=0, end=8, replacement="[PATIENT]"),
+        PIISpan(type="DATE", start=22, end=32, replacement="[DATE]"),
+    ]
+    redacted_text = (
+        "[PATIENT] presented on [DATE] with history of hypertension. "
+        "Stub redaction applied (original length {} chars)."
+    ).format(len(text)) if text else "[REDACTED TEXT]"
+
     return RedactResponse(
         trace_id=request.trace_id,
-        redacted_text="[REDACTED TEXT]",
-        spans=[fake_span],
+        redacted_text=redacted_text,
+        spans=spans,
     )
 
 

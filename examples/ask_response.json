@@ -1,0 +1,20 @@
+{
+  "status": "ok",
+  "trace_id": "uuid",
+  "pii_redacted": true,
+  "answer": "Stubbed clinical assistant answer based on retrieved context.",
+  "sources": [
+    {"source_id": "pubmed:1", "title": "Stub source", "score": 0.82}
+  ],
+  "entities": [
+    {"type": "DISEASE", "text": "diabetes", "start": 10, "end": 18}
+  ],
+  "risk": {
+    "score": 0.72,
+    "label": "high",
+    "explanation": [
+      {"feature": "bp_high", "contribution": 0.18}
+    ]
+  },
+  "warnings": []
+}
