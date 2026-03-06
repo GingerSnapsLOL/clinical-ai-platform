@@ -1,0 +1,159 @@
+name: clinical-ai-platform
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis-data:/data
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.3
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+  gateway-api:
+    build:
+      context: .
+      dockerfile: ./services/gateway-api/Dockerfile
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      ORCHESTRATOR_URL: ${ORCHESTRATOR_URL}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: ./services/orchestrator/Dockerfile
+    env_file: .env
+    environment:
+      PII_SERVICE_URL: ${PII_SERVICE_URL}
+      NER_SERVICE_URL: ${NER_SERVICE_URL}
+      RETRIEVAL_SERVICE_URL: ${RETRIEVAL_SERVICE_URL}
+      SCORING_SERVICE_URL: ${SCORING_SERVICE_URL}
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    ports:
+      - "8010:8010"
+    depends_on:
+      qdrant:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      pii-service:
+        condition: service_healthy
+      ner-service:
+        condition: service_healthy
+      retrieval-service:
+        condition: service_healthy
+      scoring-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8010/health')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  pii-service:
+    build:
+      context: .
+      dockerfile: ./services/pii-service/Dockerfile
+    env_file: .env
+    ports:
+      - "8020:8020"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8020/health')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  ner-service:
+    build:
+      context: .
+      dockerfile: ./services/ner-service/Dockerfile
+    env_file: .env
+    ports:
+      - "8030:8030"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8030/health')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  retrieval-service:
+    build:
+      context: .
+      dockerfile: ./services/retrieval-service/Dockerfile
+    env_file: .env
+    environment:
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+    ports:
+      - "8040:8040"
+    depends_on:
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8040/health')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  scoring-service:
+    build:
+      context: .
+      dockerfile: ./services/scoring-service/Dockerfile
+    env_file: .env
+    ports:
+      - "8050:8050"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8050/health')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  postgres-data:
+  redis-data:
+  qdrant-data:
