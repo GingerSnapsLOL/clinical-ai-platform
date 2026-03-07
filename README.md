@@ -1,67 +1,93 @@
-## Clinical AI Platform
+# Clinical AI Platform
 
-This repository contains a multi-service **Clinical AI Platform** prototype, designed around a LangGraph-based orchestrator and a set of focused ML microservices.
+Production-style, privacy-first Clinical AI system. PII redaction, medical NER, RAG over Qdrant, optional web enrichment (Hybrid mode), local LLM inference, tabular risk scoring with SHAP, LangGraph orchestration.
 
-Milestone 0 (“Hello Platform”) is a minimal, stubbed implementation that brings up all core services and exposes a single end-to-end path:
+## Stack
 
-- `frontend` → form for clinical note + question
-- `gateway-api` → single public API `/v1/ask`
-- `orchestrator` → stubbed state machine endpoint
-- `pii-service`, `ner-service`, `retrieval-service`, `scoring-service` → FastAPI services with `/health` and stubbed endpoints
+- **Python 3.11+**, **uv** for dependency management
+- **FastAPI** for all Python services, **Pydantic v2** for typed contracts
+- **httpx** for inter-service calls, **pytest** for tests
+- **Docker Compose** for local deployment
 
-### Quick start
+## Services
 
-1. **Copy environment template**:
+| Service           | Port | Description                          |
+|-------------------|------|--------------------------------------|
+| gateway-api       | 8000 | Auth, audit, rate limits, single API |
+| orchestrator      | 8010 | LangGraph pipeline, budgets          |
+| pii-service       | 8020 | PII detect + anonymize               |
+| ner-service       | 8030 | Medical entity extraction            |
+| retrieval-service | 8040 | RAG (Qdrant) + rerank                |
+| scoring-service   | 8050 | Risk scoring + SHAP                  |
+
+Infrastructure: **postgres** (5432), **redis** (6379), **qdrant** (6333).
+
+## Quick start
+
+1. Copy env and start:
 
 ```bash
 cp .env.example .env
-```
-
-2. **Build and run everything**:
-
-```bash
 docker compose up --build
 ```
 
-3. **Verify health endpoints** (from your host):
+2. Health checks:
 
-- Gateway: `http://localhost:8000/health`
-- Orchestrator: `http://localhost:8001/health`
-- PII service: `http://localhost:8002/health`
-- NER service: `http://localhost:8003/health`
-- Retrieval service: `http://localhost:8004/health`
-- Scoring service: `http://localhost:8005/health`
-- Frontend: `http://localhost:3000/`
+| Service   | URL                            |
+|-----------|--------------------------------|
+| gateway   | http://localhost:8000/health   |
+| orchestrator | http://localhost:8010/health |
+| pii       | http://localhost:8020/health   |
+| ner       | http://localhost:8030/health   |
+| retrieval | http://localhost:8040/health   |
+| scoring   | http://localhost:8050/health   |
 
-4. **Test the main API**:
-
-Send a request to the gateway:
+3. Test `/v1/ask`:
 
 ```bash
-curl -X POST http://localhost:8000/v1/ask \
-  -H "Content-Type: application/json" \
-  -d '{
-    "mode": "strict",
-    "note_text": "55-year-old with hypertension...",
-    "question": "What is the risk profile?",
-    "user_context": {"lang": "en"}
-  }'
+python scripts/demo_m1.py
+# or with a payload file:
+python scripts/demo_m1.py --payload examples/ask_request.json
 ```
 
-You should receive a **stubbed JSON response** containing `answer`, `sources`, `entities`, `risk`, `trace_id`, and `pii_redacted`.
+Or with curl (use a file to avoid shell quoting):
 
-5. **Open the frontend**:
+```bash
+curl -X POST http://localhost:8000/v1/ask -H "Content-Type: application/json" -d @examples/ask_request.json
+```
 
-Navigate to `http://localhost:3000/` in your browser, enter a note and question, and submit. You should see the stubbed answer returned from the gateway.
+## Development
 
-### Project layout
+### Dependencies (uv)
 
-The full architecture and contracts are documented in `PROJECT_SPEC.md`. The high-level layout:
+```bash
+uv sync
+```
 
-- `services/` — all application services (gateway, orchestrator, PII, NER, retrieval, scoring, frontend)
-- `infra/` — optional observability stack (Prometheus, Grafana, Loki)
-- `data/` — knowledge base sources and scripts
-- `eval/` — evaluation scaffolding for RAG, NER, and scoring
+### Tests
 
-Later milestones will replace stubs with real ML logic, LangGraph orchestration, RAG over Qdrant, and risk scoring with explainability.
+```bash
+make test
+# or run per service:
+uv run pytest services/shared/tests -v
+PYTHONPATH=.:services/gateway-api uv run pytest services/gateway-api/tests -v
+# ... same for orchestrator, pii-service, ner-service, retrieval-service, scoring-service
+```
 
+## Modes
+
+- **Strict (default)**: No internet; only local KB (Qdrant, guidelines).
+- **Hybrid**: Web search/page fetch allowed; queries de-identified; allowlist domains; content untrusted and cited.
+
+## Layout
+
+- `services/` — gateway-api, orchestrator, pii, ner, retrieval, scoring (each with `app/`, `tests/`, `Dockerfile`, `pyproject.toml`)
+- `services/shared/` — typed schemas (`schemas_v1.py`), http client, logging
+- `examples/` — `ask_request.json`, `ask_response.json`
+- `scripts/` — `demo_m1.py`, `demo_m1.sh`
+- `data/`, `eval/`, `infra/` — KB sources, evaluation, optional observability
+
+## Docs
+
+- `PROJECT_SPEC.md` — architecture, milestones, data
+- `AI_RULES.md` — core principles, tech rules, naming

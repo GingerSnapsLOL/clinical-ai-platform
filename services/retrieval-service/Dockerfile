@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY services ./services
 COPY services/retrieval-service/pyproject.toml ./pyproject.toml
 COPY services/retrieval-service/app ./app
 
-RUN pip install --no-cache-dir .
+RUN uv pip install --system --no-cache .
 
 ENV RETRIEVAL_SERVICE_PORT=8040
 

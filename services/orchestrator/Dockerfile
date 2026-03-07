@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY services ./services
 COPY services/orchestrator/pyproject.toml ./pyproject.toml
 COPY services/orchestrator/app ./app
 
-RUN pip install --no-cache-dir .
+RUN uv pip install --system --no-cache .
 
 # Orchestrator listens on 8010 (matches docker-compose and ORCHESTRATOR_URL)
 ENV ORCHESTRATOR_PORT=8010

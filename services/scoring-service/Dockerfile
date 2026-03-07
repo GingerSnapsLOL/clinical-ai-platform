@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY services ./services
 COPY services/scoring-service/pyproject.toml ./pyproject.toml
 COPY services/scoring-service/app ./app
 
-RUN pip install --no-cache-dir .
+RUN uv pip install --system --no-cache .
 
 ENV SCORING_SERVICE_PORT=8050
 

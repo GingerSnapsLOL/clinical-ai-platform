@@ -26,7 +26,7 @@ health:
 	@curl -fsS http://localhost:8020/health >/dev/null && echo "pii-service OK"
 
 test:
-	pip install -e . -q
+	uv sync
 	PYTHONPATH=. python -m pytest services/shared/tests -v --tb=short
 	PYTHONPATH=.:services/gateway-api python -m pytest services/gateway-api/tests -v --tb=short
 	PYTHONPATH=.:services/orchestrator python -m pytest services/orchestrator/tests -v --tb=short

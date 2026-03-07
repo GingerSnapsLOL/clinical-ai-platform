@@ -15,7 +15,7 @@ from pathlib import Path
 try:
     import httpx
 except ImportError:
-    print("Error: httpx required. Run: pip install httpx")
+    print("Error: httpx required. Run: uv pip install httpx")
     sys.exit(1)
 
 DEFAULT_URL = "http://localhost:8000"
