@@ -90,4 +90,3 @@ PYTHONPATH=.:services/gateway-api uv run pytest services/gateway-api/tests -v
 ## Docs
 
 - `PROJECT_SPEC.md` — architecture, milestones, data
-- `AI_RULES.md` — core principles, tech rules, naming

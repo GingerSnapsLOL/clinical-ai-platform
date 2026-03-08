@@ -1,0 +1,504 @@
+{
+  "documents": [
+    {
+      "doc_id": "htn-def-001",
+      "text": "Hypertension is defined as systolic BP ≥140 mmHg or diastolic BP ≥90 mmHg on at least two readings. Accurate diagnosis requires proper technique and out-of-office confirmation when appropriate.",
+      "metadata": {
+        "title": "Hypertension Definition",
+        "source": "JNC 8",
+        "topic": "hypertension",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "htn-firstline-002",
+      "text": "First-line pharmacologic options for hypertension include ACE inhibitors, ARBs, thiazide diuretics, and calcium channel blockers. Choice depends on comorbidities, race, and tolerability.",
+      "metadata": {
+        "title": "First-Line Antihypertensive Therapy",
+        "source": "ACC/AHA Guideline",
+        "topic": "hypertension",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "htn-target-003",
+      "text": "For most adults with hypertension or elevated cardiovascular risk, treat to a target of <130/80 mmHg. For older adults with limited life expectancy, individualize targets.",
+      "metadata": {
+        "title": "Blood Pressure Treatment Targets",
+        "source": "ACC/AHA Guideline",
+        "topic": "hypertension",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "htn-resistant-004",
+      "text": "Resistant hypertension is defined as BP above goal despite three antihypertensive agents including a diuretic. Exclude white-coat effect and medication nonadherence before escalating.",
+      "metadata": {
+        "title": "Resistant Hypertension",
+        "source": "AHA Scientific Statement",
+        "topic": "hypertension",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "htn-sodium-005",
+      "text": "Sodium restriction to less than 2.3 g per day is recommended for all hypertensive patients. Further reduction to 1.5 g daily may provide additional benefit when achievable.",
+      "metadata": {
+        "title": "Sodium Restriction in Hypertension",
+        "source": "JNC 8",
+        "topic": "lifestyle modification",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "htn-dash-006",
+      "text": "The DASH diet emphasizes fruits, vegetables, whole grains, and low-fat dairy while limiting saturated fat and cholesterol. It can lower systolic BP by 5–11 mmHg when combined with sodium reduction.",
+      "metadata": {
+        "title": "DASH Diet for Hypertension",
+        "source": "NIH/NHLBI",
+        "topic": "lifestyle modification",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "htn-exercise-007",
+      "text": "Aerobic exercise of at least 150 minutes per week at moderate intensity is recommended for blood pressure control. Dynamic resistance training may provide additional benefit.",
+      "metadata": {
+        "title": "Exercise and Hypertension",
+        "source": "ESC/ESH Guidelines",
+        "topic": "lifestyle modification",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "htn-weight-008",
+      "text": "Weight loss of 5–10% of body weight can significantly reduce blood pressure in overweight and obese individuals. Combined lifestyle intervention is more effective than diet or exercise alone.",
+      "metadata": {
+        "title": "Weight Loss and BP",
+        "source": "ACC/AHA Guideline",
+        "topic": "lifestyle modification",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "ace-lisinopril-009",
+      "text": "Lisinopril is an ACE inhibitor used for hypertension and heart failure. Common adverse effects include cough, hyperkalemia, and angioedema. Monitor renal function and potassium.",
+      "metadata": {
+        "title": "Lisinopril Summary",
+        "source": "Drug monograph",
+        "topic": "ACE inhibitors",
+        "type": "drug"
+      }
+    },
+    {
+      "doc_id": "ace-ramipril-010",
+      "text": "Ramipril is indicated for hypertension, heart failure, and post-MI. Reduce dose when CrCl is below 50 mL/min. Contraindicated in pregnancy due to fetal toxicity.",
+      "metadata": {
+        "title": "Ramipril Summary",
+        "source": "Drug monograph",
+        "topic": "ACE inhibitors",
+        "type": "drug"
+      }
+    },
+    {
+      "doc_id": "ace-enalapril-011",
+      "text": "Enalapril has a rapid onset and is used for hypertension and heart failure. Avoid in bilateral renal artery stenosis. May cause cough and hyperkalemia; monitor in renal impairment.",
+      "metadata": {
+        "title": "Enalapril Summary",
+        "source": "Drug monograph",
+        "topic": "ACE inhibitors",
+        "type": "drug"
+      }
+    },
+    {
+      "doc_id": "ace-cough-012",
+      "text": "ACE inhibitor-induced cough is a class effect mediated by bradykinin accumulation. Switching to an ARB typically resolves cough while preserving RAS blockade.",
+      "metadata": {
+        "title": "ACE Inhibitor Cough",
+        "source": "Clinical review",
+        "topic": "ACE inhibitors",
+        "type": "abstract"
+      }
+    },
+    {
+      "doc_id": "ace-renal-013",
+      "text": "ACE inhibitors can cause acute kidney injury in bilateral renal artery stenosis or volume depletion. Check baseline creatinine and potassium before and after initiation.",
+      "metadata": {
+        "title": "ACE Inhibitors and Renal Function",
+        "source": "KDIGO",
+        "topic": "ACE inhibitors",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "ace-dm-014",
+      "text": "ACE inhibitors are preferred in diabetic patients with albuminuria or cardiovascular disease. They slow progression of diabetic kidney disease and reduce cardiovascular events.",
+      "metadata": {
+        "title": "ACE Inhibitors in Diabetes",
+        "source": "ADA Standards",
+        "topic": "ACE inhibitors",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "arb-losartan-015",
+      "text": "Losartan is an ARB used for hypertension and diabetic nephropathy. It has a uricosuric effect. Avoid in pregnancy; monitor potassium and renal function.",
+      "metadata": {
+        "title": "Losartan Summary",
+        "source": "Drug monograph",
+        "topic": "ARBs",
+        "type": "drug"
+      }
+    },
+    {
+      "doc_id": "arb-valsartan-016",
+      "text": "Valsartan is indicated for hypertension, heart failure, and post-MI. Dose adjustment needed in hepatic impairment. Do not use with aliskiren in diabetes or renal impairment.",
+      "metadata": {
+        "title": "Valsartan Summary",
+        "source": "Drug monograph",
+        "topic": "ARBs",
+        "type": "drug"
+      }
+    },
+    {
+      "doc_id": "arb-telmisartan-017",
+      "text": "Telmisartan has a long half-life allowing once-daily dosing. Used for hypertension; may have PPAR-gamma activity. Avoid in pregnancy and bilateral renal artery stenosis.",
+      "metadata": {
+        "title": "Telmisartan Summary",
+        "source": "Drug monograph",
+        "topic": "ARBs",
+        "type": "drug"
+      }
+    },
+    {
+      "doc_id": "arb-ace-comp-018",
+      "text": "ARBs and ACE inhibitors have similar cardiovascular and renal benefits. ARBs are preferred when ACE inhibitor cough or angioedema occurs. Do not combine ACE and ARB routinely.",
+      "metadata": {
+        "title": "ARB vs ACE Inhibitor",
+        "source": "ESC/ESH",
+        "topic": "ARBs",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "arb-dm-019",
+      "text": "ARBs are first-line for diabetic kidney disease with albuminuria. They reduce proteinuria and slow GFR decline. Use maximum tolerated dose for renoprotection.",
+      "metadata": {
+        "title": "ARBs in Diabetic Kidney Disease",
+        "source": "ADA/KDIGO",
+        "topic": "ARBs",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "dm-dx-020",
+      "text": "Type 2 diabetes is diagnosed by HbA1c ≥6.5%, fasting glucose ≥126 mg/dL, or 2-hour glucose ≥200 mg/dL on OGTT. Confirm with repeat testing unless classic symptoms present.",
+      "metadata": {
+        "title": "Diabetes Diagnosis",
+        "source": "ADA Standards",
+        "topic": "diabetes",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "dm-metformin-021",
+      "text": "Metformin is first-line pharmacotherapy for type 2 diabetes unless contraindicated. It does not cause hypoglycemia as monotherapy. Hold before contrast and in acute illness.",
+      "metadata": {
+        "title": "Metformin in Type 2 Diabetes",
+        "source": "ADA Standards",
+        "topic": "diabetes",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "dm-hba1c-022",
+      "text": "For most nonpregnant adults with diabetes, target HbA1c is below 7%. Less stringent targets may be appropriate for limited life expectancy, advanced complications, or hypoglycemia risk.",
+      "metadata": {
+        "title": "HbA1c Targets",
+        "source": "ADA Standards",
+        "topic": "diabetes",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "dm-cvd-023",
+      "text": "In type 2 diabetes with established cardiovascular disease, SGLT2 inhibitors or GLP-1 receptor agonists with proven cardiovascular benefit are recommended regardless of HbA1c.",
+      "metadata": {
+        "title": "Diabetes and CVD Risk",
+        "source": "ADA Standards",
+        "topic": "cardiovascular risk",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "dm-ckd-024",
+      "text": "In diabetic patients with chronic kidney disease, SGLT2 inhibitors are recommended when eGFR is adequate. They reduce kidney failure and cardiovascular events.",
+      "metadata": {
+        "title": "Diabetes and CKD",
+        "source": "ADA/KDIGO",
+        "topic": "diabetes",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "dm-bp-025",
+      "text": "In diabetes with hypertension, target blood pressure is <130/80 mmHg. ACE inhibitors or ARBs are preferred for those with albuminuria or cardiovascular disease.",
+      "metadata": {
+        "title": "BP Targets in Diabetes",
+        "source": "ADA/ACC",
+        "topic": "diabetes",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "cvd-risk-calc-026",
+      "text": "Pooled cohort equations estimate 10-year risk of atherosclerotic cardiovascular disease. Use for adults 40–79 without known CVD to guide statin and aspirin decisions.",
+      "metadata": {
+        "title": "ASCVD Risk Estimation",
+        "source": "ACC/AHA Guideline",
+        "topic": "cardiovascular risk",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "cvd-statin-027",
+      "text": "High-intensity statin therapy is recommended for clinical ASCVD and for primary prevention when 10-year risk is ≥20%. Moderate-intensity is an option when high-intensity is not tolerated.",
+      "metadata": {
+        "title": "Statin Therapy for CVD Risk",
+        "source": "ACC/AHA",
+        "topic": "cardiovascular risk",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "cvd-htn-028",
+      "text": "Hypertension is a major modifiable risk factor for stroke, MI, and heart failure. Even modest BP reduction significantly lowers cardiovascular events.",
+      "metadata": {
+        "title": "Hypertension and CVD",
+        "source": "ESC/ESH",
+        "topic": "cardiovascular risk",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "cvd-dm-029",
+      "text": "Diabetes substantially increases cardiovascular risk. Comprehensive risk factor management—glycemia, blood pressure, lipids, and antiplatelet therapy—is essential.",
+      "metadata": {
+        "title": "Diabetes and CVD Risk",
+        "source": "ADA",
+        "topic": "cardiovascular risk",
+        "type": "abstract"
+      }
+    },
+    {
+      "doc_id": "cvd-lifestyle-030",
+      "text": "Lifestyle modification reduces cardiovascular risk: smoking cessation, healthy diet, physical activity, and weight management. These should accompany pharmacotherapy.",
+      "metadata": {
+        "title": "Lifestyle and CVD Prevention",
+        "source": "AHA/ACC",
+        "topic": "lifestyle modification",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "htn-whitecoat-031",
+      "text": "White-coat hypertension is elevated BP in clinic with normal out-of-office readings. Confirm with home or ambulatory monitoring before starting lifelong therapy.",
+      "metadata": {
+        "title": "White-Coat Hypertension",
+        "source": "ESH position paper",
+        "topic": "hypertension",
+        "type": "abstract"
+      }
+    },
+    {
+      "doc_id": "htn-masked-032",
+      "text": "Masked hypertension is normal clinic BP with elevated home or ambulatory readings. It carries cardiovascular risk similar to sustained hypertension and is underdiagnosed.",
+      "metadata": {
+        "title": "Masked Hypertension",
+        "source": "ESH",
+        "topic": "hypertension",
+        "type": "abstract"
+      }
+    },
+    {
+      "doc_id": "htn-ccb-033",
+      "text": "Calcium channel blockers are first-line for hypertension, especially in older adults and Black patients. Dihydropyridines are preferred for BP; non-DHPs for rate control.",
+      "metadata": {
+        "title": "CCBs in Hypertension",
+        "source": "ACC/AHA",
+        "topic": "hypertension",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "htn-thiazide-034",
+      "text": "Thiazide and thiazide-like diuretics are first-line for hypertension. Chlorthalidone may be preferred over hydrochlorothiazide for superior 24-hour BP control and outcome data.",
+      "metadata": {
+        "title": "Thiazide Diuretics",
+        "source": "JNC 8",
+        "topic": "hypertension",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "ace-benazepril-035",
+      "text": "Benazepril is an ACE inhibitor used for hypertension. It is a prodrug converted to benazeprilat. Reduce dose in renal impairment; contraindicated in pregnancy.",
+      "metadata": {
+        "title": "Benazepril Summary",
+        "source": "Drug monograph",
+        "topic": "ACE inhibitors",
+        "type": "drug"
+      }
+    },
+    {
+      "doc_id": "ace-quinapril-036",
+      "text": "Quinapril is an ACE inhibitor for hypertension and heart failure. Dose adjustment required when CrCl is below 60 mL/min. Monitor for angioedema, especially in first month.",
+      "metadata": {
+        "title": "Quinapril Summary",
+        "source": "Drug monograph",
+        "topic": "ACE inhibitors",
+        "type": "drug"
+      }
+    },
+    {
+      "doc_id": "arb-irbesartan-037",
+      "text": "Irbesartan is an ARB for hypertension and diabetic nephropathy with macroalbuminuria. It has a long half-life. Avoid in pregnancy; monitor potassium in renal impairment.",
+      "metadata": {
+        "title": "Irbesartan Summary",
+        "source": "Drug monograph",
+        "topic": "ARBs",
+        "type": "drug"
+      }
+    },
+    {
+      "doc_id": "arb-candesartan-038",
+      "text": "Candesartan is used for hypertension and heart failure. It is an active drug not requiring metabolism. Do not use with aliskiren in diabetes; avoid in pregnancy.",
+      "metadata": {
+        "title": "Candesartan Summary",
+        "source": "Drug monograph",
+        "topic": "ARBs",
+        "type": "drug"
+      }
+    },
+    {
+      "doc_id": "dm-sglt2-039",
+      "text": "SGLT2 inhibitors lower glucose by reducing reabsorption in the proximal tubule. They reduce heart failure hospitalizations and kidney progression in type 2 diabetes.",
+      "metadata": {
+        "title": "SGLT2 Inhibitors",
+        "source": "ADA Standards",
+        "topic": "diabetes",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "dm-glp1-040",
+      "text": "GLP-1 receptor agonists improve glycemia and promote weight loss. Those with proven cardiovascular benefit should be considered in type 2 diabetes with established CVD.",
+      "metadata": {
+        "title": "GLP-1 Agonists",
+        "source": "ADA Standards",
+        "topic": "diabetes",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "lifestyle-alcohol-041",
+      "text": "Limit alcohol to no more than one drink per day for women and two for men to support blood pressure control. Excessive intake raises BP and interferes with medications.",
+      "metadata": {
+        "title": "Alcohol and BP",
+        "source": "JNC 8",
+        "topic": "lifestyle modification",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "lifestyle-smoking-042",
+      "text": "Smoking cessation is critical for cardiovascular risk reduction. Each risk factor guideline recommends cessation; consider behavioral support and pharmacotherapy.",
+      "metadata": {
+        "title": "Smoking Cessation",
+        "source": "AHA/ACC",
+        "topic": "lifestyle modification",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "htn-urgency-043",
+      "text": "Hypertensive urgency is severely elevated BP without acute organ damage. Lower BP gradually over hours to days; avoid rapid reduction. Reassess medications and adherence.",
+      "metadata": {
+        "title": "Hypertensive Urgency",
+        "source": "ACC/AHA",
+        "topic": "hypertension",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "htn-emergency-044",
+      "text": "Hypertensive emergency is severe BP elevation with acute organ damage. Treat in ICU with intravenous agents; reduce mean arterial pressure by no more than 25% in the first hour.",
+      "metadata": {
+        "title": "Hypertensive Emergency",
+        "source": "ACC/AHA",
+        "topic": "hypertension",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "ace-angioedema-045",
+      "text": "ACE inhibitor angioedema can occur at any time during therapy. Discontinue permanently and avoid ARBs in the same patient due to cross-reactivity risk.",
+      "metadata": {
+        "title": "ACE Inhibitor Angioedema",
+        "source": "Clinical review",
+        "topic": "ACE inhibitors",
+        "type": "abstract"
+      }
+    },
+    {
+      "doc_id": "dm-hypo-046",
+      "text": "Hypoglycemia is a limiting factor in diabetes management. Individualize targets and drug choice to minimize hypoglycemia, especially in elderly and those with long duration.",
+      "metadata": {
+        "title": "Hypoglycemia Prevention",
+        "source": "ADA Standards",
+        "topic": "diabetes",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "cvd-aspirin-047",
+      "text": "Aspirin for primary prevention of ASCVD should be individualized in adults 40–70 at increased risk without bleeding risk. Do not use routinely in adults over 70.",
+      "metadata": {
+        "title": "Aspirin in Primary Prevention",
+        "source": "USPSTF/ACC",
+        "topic": "cardiovascular risk",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "htn-followup-048",
+      "text": "After starting or changing antihypertensive therapy, reassess within one month. Once at goal, follow up every 3–6 months. More frequent monitoring if recent change or comorbidities.",
+      "metadata": {
+        "title": "Hypertension Follow-Up",
+        "source": "JNC 8",
+        "topic": "hypertension",
+        "type": "guideline"
+      }
+    },
+    {
+      "doc_id": "arb-hyperkalemia-049",
+      "text": "ARBs can cause hyperkalemia, especially with renal impairment or when combined with potassium-sparing drugs. Monitor potassium; consider dose reduction or discontinuation if persistent.",
+      "metadata": {
+        "title": "ARBs and Potassium",
+        "source": "Drug monograph",
+        "topic": "ARBs",
+        "type": "drug"
+      }
+    },
+    {
+      "doc_id": "dm-screening-050",
+      "text": "Screen for prediabetes and type 2 diabetes in adults 35–70 who are overweight or obese. Use FPG, HbA1c, or OGTT. Repeat every 3 years if normal.",
+      "metadata": {
+        "title": "Diabetes Screening",
+        "source": "ADA/USPSTF",
+        "topic": "diabetes",
+        "type": "guideline"
+      }
+    }
+  ]
+}

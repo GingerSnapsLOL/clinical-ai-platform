@@ -1,7 +1,12 @@
 import os
-from typing import List
+import re
+from typing import Any, Dict, List
 
 from fastapi import FastAPI
+from pydantic import BaseModel, Field
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, PointStruct, VectorParams
+from sentence_transformers import SentenceTransformer
 
 from services.shared.logging_util import set_trace_id, structured_log_middleware
 from services.shared.schemas_v1 import (
@@ -11,9 +16,135 @@ from services.shared.schemas_v1 import (
     RetrieveResponse,
 )
 
+COLLECTION_NAME = "clinical_docs"
+VECTOR_SIZE = 384
+EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+CHUNK_MIN_TOKENS = 300
+CHUNK_MAX_TOKENS = 500
+
+_embed_model: SentenceTransformer | None = None
+_qdrant_client: QdrantClient | None = None
+
+
+# ---------------------------------------------------------------------------
+# Ingest schemas
+# ---------------------------------------------------------------------------
+class IngestDocument(BaseModel):
+    doc_id: str
+    text: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class IngestRequest(BaseModel):
+    documents: List[IngestDocument]
+
+
+class IngestResponse(BaseModel):
+    chunks_inserted: int
+
+
+def embed_text(text: str) -> list[float]:
+    """Embed text with the loaded model. Returns 384-dim vector (CPU only)."""
+    global _embed_model
+    if _embed_model is None:
+        raise RuntimeError("Embedding model not loaded")
+    vec = _embed_model.encode(text, convert_to_numpy=True)
+    return vec.tolist()
+
+
+def _get_qdrant() -> QdrantClient:
+    global _qdrant_client
+    if _qdrant_client is None:
+        raise RuntimeError("Qdrant client not initialized")
+    return _qdrant_client
+
+
+def init_qdrant_collection() -> None:
+    """On startup: create collection 'clinical_docs' if it does not exist."""
+    global _qdrant_client
+    host = os.getenv("QDRANT_HOST", "localhost")
+    port = int(os.getenv("QDRANT_PORT", "6333"))
+    _qdrant_client = QdrantClient(host=host, port=port)
+
+    if not _qdrant_client.collection_exists(COLLECTION_NAME):
+        _qdrant_client.create_collection(
+            collection_name=COLLECTION_NAME,
+            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+        )
+
+
+def _count_tokens(text: str) -> int:
+    """Count tokens using model tokenizer if available, else approximate (~4 chars/token)."""
+    if _embed_model is None:
+        return max(1, len(text) // 4)
+    try:
+        tok = _embed_model.tokenizer
+        return len(tok.encode(text, add_special_tokens=False))
+    except AttributeError:
+        return max(1, len(text) // 4)
+
+
+def _chunk_text(text: str, doc_id: str, metadata: Dict[str, Any]) -> List[tuple[int, str, Dict[str, Any]]]:
+    """Chunk text into 300–500 token segments. Returns list of (chunk_index, chunk_text, payload)."""
+    if not text or not text.strip():
+        return []
+
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    if not sentences:
+        sentences = [text]
+
+    chunks: List[tuple[int, str, Dict[str, Any]]] = []
+    current: List[str] = []
+    current_tokens = 0
+    chunk_index = 0
+
+    for sent in sentences:
+        sent = sent.strip()
+        if not sent:
+            continue
+        n = _count_tokens(sent)
+
+        if current_tokens + n > CHUNK_MAX_TOKENS and current:
+            chunk_text = " ".join(current)
+            payload = {"text": chunk_text, "doc_id": doc_id, **metadata}
+            chunks.append((chunk_index, chunk_text, payload))
+            chunk_index += 1
+            current = []
+            current_tokens = 0
+
+        current.append(sent)
+        current_tokens += n
+
+        if current_tokens >= CHUNK_MIN_TOKENS:
+            chunk_text = " ".join(current)
+            payload = {"text": chunk_text, "doc_id": doc_id, **metadata}
+            chunks.append((chunk_index, chunk_text, payload))
+            chunk_index += 1
+            current = []
+            current_tokens = 0
+
+    if current:
+        chunk_text = " ".join(current)
+        payload = {"text": chunk_text, "doc_id": doc_id, **metadata}
+        chunks.append((chunk_index, chunk_text, payload))
+
+    return chunks
+
 
 app = FastAPI(title="Retrieval Service", version="0.1.0")
 app.add_middleware(structured_log_middleware("retrieval-service"))
+
+
+def _load_embed_model() -> None:
+    """Load embedding model once at startup (CPU only)."""
+    global _embed_model
+    _embed_model = SentenceTransformer(EMBED_MODEL, device="cpu")
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    _load_embed_model()
+    init_qdrant_collection()
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -24,36 +155,75 @@ async def health() -> HealthResponse:
 @app.post("/v1/retrieve", response_model=RetrieveResponse)
 async def retrieve(request: RetrieveRequest) -> RetrieveResponse:
     """
-    Stub retrieval: returns 2 fake passages.
-    Accepts RetrieveRequest, returns RetrieveResponse; preserves trace_id.
+    Real retrieval: embed query, search Qdrant, return top_k passages.
+    Response passages map to sources (source_id, snippet/text, score, metadata).
     """
     set_trace_id(request.trace_id)
 
-    passages: List[PassageItem] = [
-        PassageItem(
-            source_id="pubmed:123",
-            text=(
-                "Hypertension is defined as systolic BP ≥140 mmHg or diastolic BP ≥90 mmHg. "
-                "First-line therapy includes ACE inhibitors, thiazide diuretics, or calcium channel blockers."
-            ),
-            score=0.82,
-            metadata={"doc_id": "pubmed:123", "title": "JNC Guideline Excerpt"},
-        ),
-        PassageItem(
-            source_id="pubmed:456",
-            text=(
-                "Lisinopril is an ACE inhibitor used for hypertension and heart failure. "
-                "Common side effects include cough and hyperkalemia; monitor renal function."
-            ),
-            score=0.76,
-            metadata={"doc_id": "pubmed:456", "title": "Drug Monograph Excerpt"},
-        ),
-    ]
+    query_vector = embed_text(request.query)
+    client = _get_qdrant()
+    hits = client.search(
+        collection_name=COLLECTION_NAME,
+        query_vector=query_vector,
+        limit=request.top_k,
+    )
+
+    passages: List[PassageItem] = []
+    for h in hits:
+        payload = h.payload or {}
+        source_id = payload.get("doc_id", str(h.id))
+        text = payload.get("text", "")
+        metadata = {k: v for k, v in payload.items() if k not in ("text", "doc_id")}
+        passages.append(
+            PassageItem(
+                source_id=source_id,
+                text=text,
+                score=float(h.score) if h.score is not None else 0.0,
+                metadata=metadata if metadata else None,
+            )
+        )
+
+    # Deduplicate by (source_id, text), keep highest-scoring (order already by score desc)
+    seen: set[tuple[str, str]] = set()
+    unique_passages: List[PassageItem] = []
+    for p in passages:
+        key = (p.source_id, p.text)
+        if key not in seen:
+            seen.add(key)
+            unique_passages.append(p)
 
     return RetrieveResponse(
         trace_id=request.trace_id,
-        passages=passages,
+        passages=unique_passages,
     )
+
+
+@app.post("/v1/ingest", response_model=IngestResponse)
+async def ingest(request: IngestRequest) -> IngestResponse:
+    """
+    Chunk documents (300–500 tokens), compute embeddings, insert into Qdrant.
+    Returns number of inserted chunks.
+    """
+    client = _get_qdrant()
+    points: List[PointStruct] = []
+
+    for doc in request.documents:
+        for chunk_index, chunk_text, payload in _chunk_text(doc.text, doc.doc_id, doc.metadata):
+            # Stable point ID for idempotent ingestion: re-ingesting same doc overwrites
+            point_id = f"{doc.doc_id}::{chunk_index}"
+            embedding = embed_text(chunk_text)
+            points.append(
+                PointStruct(
+                    id=point_id,
+                    vector=embedding,
+                    payload=payload,
+                )
+            )
+
+    if points:
+        client.upsert(collection_name=COLLECTION_NAME, points=points)
+
+    return IngestResponse(chunks_inserted=len(points))
 
 
 if __name__ == "__main__":

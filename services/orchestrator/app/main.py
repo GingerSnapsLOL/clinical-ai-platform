@@ -4,7 +4,9 @@ from typing import List
 from fastapi import FastAPI
 
 from services.shared.http_client import create_client, get_timeout, post_typed
-from services.shared.logging_util import set_trace_id, structured_log_middleware
+from services.shared.logging_util import get_logger, set_trace_id, structured_log_middleware
+
+logger = get_logger(__name__, "orchestrator")
 from services.shared.schemas_v1 import (
     AskRequest,
     AskResponse,
@@ -42,19 +44,6 @@ def _retrieval_url() -> str:
 def _scoring_url() -> str:
     base = os.getenv("SCORING_SERVICE_URL", "http://scoring-service:8050")
     return f"{base.rstrip('/')}/v1/score"
-
-
-# Stub defaults when a downstream call fails
-def _stub_sources() -> List[SourceItem]:
-    return [
-        SourceItem(
-            source_id="pubmed:123",
-            title="Stubbed Hypertension Guideline",
-            url="https://example.org/pubmed/123",
-            snippet="This is a placeholder snippet from a local guideline corpus.",
-            score=0.82,
-        )
-    ]
 
 
 def _stub_entities() -> List[EntityItem]:
@@ -97,8 +86,8 @@ async def ask(request: AskRequest) -> AskResponse:
     pii_redacted = False
     # 2) NER extraction (uses redacted text)
     entities: List[EntityItem] = _stub_entities()
-    # 3) Retrieval
-    sources: List[SourceItem] = _stub_sources()
+    # 3) Retrieval (sources from retrieval-service only)
+    sources: List[SourceItem] = []
     # 4) Scoring (uses entities from NER)
     risk = _stub_risk()
 
@@ -128,8 +117,8 @@ async def ask(request: AskRequest) -> AskResponse:
         if data is not None:
             entities = data.entities
 
-        # 3) retrieval-service /v1/retrieve
-        data, _, _ = await post_typed(
+        # 3) retrieval-service /v1/retrieve with user question; sources come only from here (no stubs)
+        retrieval_data, _, _ = await post_typed(
             client,
             _retrieval_url(),
             RetrieveRequest(
@@ -142,7 +131,16 @@ async def ask(request: AskRequest) -> AskResponse:
             timeout=timeout,
             trace_id=trace_id,
         )
-        if data is not None and data.passages:
+        num_passages = len(retrieval_data.passages) if retrieval_data else 0
+        logger.info(
+            "retrieval",
+            extra={
+                "trace_id": trace_id,
+                "retrieval_query": request.question,
+                "passages_returned": num_passages,
+            },
+        )
+        if retrieval_data is not None and retrieval_data.passages:
             sources = [
                 SourceItem(
                     source_id=p.source_id,
@@ -150,7 +148,7 @@ async def ask(request: AskRequest) -> AskResponse:
                     score=p.score,
                     metadata=p.metadata,
                 )
-                for p in data.passages
+                for p in retrieval_data.passages
             ]
 
         # 4) scoring-service /v1/score (input: entities from step 2)
@@ -175,8 +173,9 @@ async def ask(request: AskRequest) -> AskResponse:
 
     # Stub answer generation (LLM synthesis not implemented yet)
     answer = (
-        "This is a stubbed clinical answer. "
-        "Based on the note and question, entities and risk were computed from the pipeline; "
+        "This is a stubbed clinical answer based on retrieved context. "
+        f"Retrieved {len(sources)} source(s) for your question. "
+        "Entities and risk were computed from the pipeline; "
         "full answer synthesis will use an LLM in a later milestone."
     )
 
