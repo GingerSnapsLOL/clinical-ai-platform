@@ -5,13 +5,15 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Include shared schemas and service code
-COPY services ./services
 COPY services/gateway-api/pyproject.toml ./pyproject.toml
+COPY services/gateway-api/uv.lock ./uv.lock
+RUN uv sync --locked --no-install-project
+
+COPY services ./services
 COPY services/gateway-api/app ./app
+RUN uv sync --locked --no-editable
 
-RUN uv pip install --system --no-cache .
-
+ENV PATH="/app/.venv/bin:$PATH"
 ENV GATEWAY_PORT=8000
 
 EXPOSE 8000

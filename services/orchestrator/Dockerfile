@@ -5,14 +5,15 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Include shared schemas and service code
-COPY services ./services
 COPY services/orchestrator/pyproject.toml ./pyproject.toml
+COPY services/orchestrator/uv.lock ./uv.lock
+RUN uv sync --locked --no-install-project
+
+COPY services ./services
 COPY services/orchestrator/app ./app
+RUN uv sync --locked --no-editable
 
-RUN uv pip install --system --no-cache .
-
-# Orchestrator listens on 8010 (matches docker-compose and ORCHESTRATOR_URL)
+ENV PATH="/app/.venv/bin:$PATH"
 ENV ORCHESTRATOR_PORT=8010
 
 EXPOSE 8010

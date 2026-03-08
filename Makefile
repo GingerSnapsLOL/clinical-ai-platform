@@ -1,14 +1,20 @@
 SHELL := /bin/bash
 
-.PHONY: up down build rebuild logs ps health
+.PHONY: up down build rebuild lock logs ps health
+
+# Generate uv.lock in each service for reproducible Docker builds
+lock:
+	@for svc in gateway-api orchestrator pii-service ner-service retrieval-service scoring-service; do \
+		(cd services/$$svc && uv lock); \
+	done
 
 up:
 	docker compose up -d
 
-rebuild:
+rebuild: lock
 	docker compose up -d --build
 
-build:
+build: lock
 	docker compose build
 
 down:
