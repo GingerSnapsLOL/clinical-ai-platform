@@ -1,0 +1,10 @@
+# Local venv - platform-specific, built fresh in image
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+*.md
+.pytest_cache/
+.coverage
+htmlcov/

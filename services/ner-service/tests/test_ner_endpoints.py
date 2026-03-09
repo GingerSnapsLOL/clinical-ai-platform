@@ -34,3 +34,13 @@ def test_extract_contract():
     assert data["trace_id"] == "tid-1"
     assert "entities" in data
     assert len(data["entities"]) >= 1
+
+
+@pytest.mark.skip(reason="Requires SciSpaCy BC5CDR model installed")
+def test_model_loaded_on_startup():
+    # Import inside test so that app startup (and model init) runs.
+    from app.ner_model import get_nlp
+
+    nlp = get_nlp()
+    # Basic sanity check: pipeline has an NER component
+    assert "ner" in nlp.pipe_names

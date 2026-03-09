@@ -46,10 +46,6 @@ def _scoring_url() -> str:
     return f"{base.rstrip('/')}/v1/score"
 
 
-def _stub_entities() -> List[EntityItem]:
-    return [EntityItem(type="DISEASE", text="hypertension", start=0, end=11, confidence=0.9)]
-
-
 def _stub_risk() -> RiskBlock:
     return RiskBlock(
         score=0.72,
@@ -85,7 +81,7 @@ async def ask(request: AskRequest) -> AskResponse:
     redacted_text = request.note_text
     pii_redacted = False
     # 2) NER extraction (uses redacted text)
-    entities: List[EntityItem] = _stub_entities()
+    entities: List[EntityItem] = []
     # 3) Retrieval (sources from retrieval-service only)
     sources: List[SourceItem] = []
     # 4) Scoring (uses entities from NER)

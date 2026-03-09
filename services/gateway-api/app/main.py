@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from services.shared.http_client import create_client, get_timeout, post_typed
-from services.shared.logging_util import set_trace_id, structured_log_middleware
+from services.shared.logging_util import get_logger, set_trace_id, structured_log_middleware
 from services.shared.schemas_v1 import (
     AskRequest,
     AskResponse,
@@ -19,9 +19,17 @@ from services.shared.schemas_v1 import (
 )
 
 
+logger = get_logger(__name__, "gateway-api")
+
+
 def get_cors_origins() -> List[str]:
     raw = os.getenv("CORS_ORIGINS", "http://localhost:3000")
     return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+def _get_orchestrator_url() -> str:
+    url = os.getenv("ORCHESTRATOR_URL") or "http://orchestrator:8010"
+    return url.strip().rstrip("/")
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +127,41 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+async def startup() -> None:
+    orchestrator_url = _get_orchestrator_url()
+    logger.info(
+        "gateway_startup",
+        extra={
+            "service": "gateway-api",
+            "orchestrator_url": orchestrator_url,
+        },
+    )
+
+    # Best-effort connectivity check to orchestrator /health (does not block startup).
+    timeout = get_timeout()
+    try:
+        async with create_client(timeout=timeout) as client:
+            resp = await client.get(f"{orchestrator_url}/health", timeout=timeout)
+        logger.info(
+            "gateway_orchestrator_health_check",
+            extra={
+                "service": "gateway-api",
+                "orchestrator_url": orchestrator_url,
+                "orchestrator_health_status": resp.status_code,
+            },
+        )
+    except Exception as exc:
+        logger.info(
+            "gateway_orchestrator_health_check_failed",
+            extra={
+                "service": "gateway-api",
+                "orchestrator_url": orchestrator_url,
+                "error": str(exc),
+            },
+        )
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse(service="gateway-api")
@@ -141,8 +184,8 @@ async def ask(request: AskRequestIn) -> AskResponse:
         user_context=request.user_context,
     )
 
-    orchestrator_url = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8010")
-    url = f"{orchestrator_url.rstrip('/')}/v1/ask"
+    orchestrator_url = _get_orchestrator_url()
+    url = f"{orchestrator_url}/v1/ask"
     timeout = get_timeout()
 
     async with create_client(timeout=timeout) as client:

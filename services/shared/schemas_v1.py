@@ -101,6 +101,7 @@ class PIISpan(BaseModel):
     start: int
     end: int
     replacement: str
+    confidence: Optional[float] = None
 
 class RedactRequest(BaseModel):
     trace_id: str

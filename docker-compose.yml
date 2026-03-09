@@ -44,13 +44,15 @@ services:
     environment:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
-      ORCHESTRATOR_URL: ${ORCHESTRATOR_URL}
+      ORCHESTRATOR_URL: ${ORCHESTRATOR_URL:-http://orchestrator:8010}
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      orchestrator:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
