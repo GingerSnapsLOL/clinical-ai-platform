@@ -1,0 +1,285 @@
+ Image clinical-ai-platform-pii-service Building 
+ Image clinical-ai-platform-orchestrator Building 
+ Image clinical-ai-platform-ner-service Building 
+ Image clinical-ai-platform-gateway-api Building 
+ Image clinical-ai-platform-scoring-service Building 
+ Image clinical-ai-platform-retrieval-service Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 3.09kB done
+#1 DONE 0.0s
+
+#2 [retrieval-service internal] load build definition from Dockerfile
+#2 transferring dockerfile: 591B done
+#2 DONE 0.0s
+
+#3 [scoring-service internal] load build definition from Dockerfile
+#3 transferring dockerfile: 583B done
+#3 DONE 0.0s
+
+#4 [orchestrator internal] load build definition from Dockerfile
+#4 transferring dockerfile: 571B done
+#4 DONE 0.0s
+
+#5 [gateway-api internal] load build definition from Dockerfile
+#5 transferring dockerfile: 565B done
+#5 DONE 0.0s
+
+#6 [pii-service internal] load build definition from Dockerfile
+#6 transferring dockerfile: 810B done
+#6 DONE 0.0s
+
+#7 [ner-service internal] load build definition from Dockerfile
+#7 transferring dockerfile: 691B done
+#7 DONE 0.0s
+
+#8 [ner-service internal] load metadata for ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+#8 DONE 1.2s
+
+#9 [ner-service internal] load .dockerignore
+#9 transferring context: 174B done
+#9 DONE 0.0s
+
+#10 [ner-service 1/8] FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim@sha256:4f5d923c9dcea037f57bda425dd209f3ec643da2f0b74227f68d09dab0b3bb36
+#10 resolve ghcr.io/astral-sh/uv:python3.11-bookworm-slim@sha256:4f5d923c9dcea037f57bda425dd209f3ec643da2f0b74227f68d09dab0b3bb36 0.0s done
+#10 DONE 0.0s
+
+#11 [ner-service internal] load build context
+#11 transferring context: 7.57kB 0.0s done
+#11 DONE 0.0s
+
+#12 [scoring-service internal] load build context
+#12 transferring context: 7.57kB 0.0s done
+#12 DONE 0.0s
+
+#13 [gateway-api internal] load build context
+#13 transferring context: 7.57kB 0.0s done
+#13 DONE 0.0s
+
+#14 [pii-service internal] load build context
+#14 transferring context: 7.57kB 0.0s done
+#14 DONE 0.0s
+
+#15 [orchestrator internal] load build context
+#15 transferring context: 7.57kB 0.0s done
+#15 DONE 0.0s
+
+#16 [ner-service 4/9] COPY services/ner-service/uv.lock ./uv.lock
+#16 CACHED
+
+#17 [ner-service 8/9] RUN uv sync --locked --no-editable
+#17 CACHED
+
+#18 [ner-service 7/9] COPY services/ner-service/app ./app
+#18 CACHED
+
+#19 [ner-service 5/9] RUN uv sync --locked --no-install-project
+#19 CACHED
+
+#20 [ner-service 6/9] COPY services ./services
+#20 CACHED
+
+#21 [ner-service 3/9] COPY services/ner-service/pyproject.toml ./pyproject.toml
+#21 CACHED
+
+#22 [ner-service 9/9] RUN uv pip install     https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_ner_bc5cdr_md-0.5.4.tar.gz
+#22 CACHED
+
+#23 [retrieval-service internal] load build context
+#23 transferring context: 7.57kB 0.0s done
+#23 DONE 0.0s
+
+#24 [pii-service 6/9] COPY services ./services
+#24 CACHED
+
+#25 [pii-service 4/9] COPY services/pii-service/uv.lock ./uv.lock
+#25 CACHED
+
+#26 [pii-service 7/9] COPY services/pii-service/app ./app
+#26 CACHED
+
+#27 [pii-service 3/9] COPY services/pii-service/pyproject.toml ./pyproject.toml
+#27 CACHED
+
+#28 [pii-service 8/9] RUN uv sync --locked --no-editable
+#28 CACHED
+
+#29 [pii-service 5/9] RUN uv sync --locked --no-install-project
+#29 CACHED
+
+#30 [pii-service 9/9] RUN uv pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.7.1/en_core_web_lg-3.7.1-py3-none-any.whl
+#30 CACHED
+
+#31 [gateway-api 3/8] COPY services/gateway-api/pyproject.toml ./pyproject.toml
+#31 CACHED
+
+#32 [gateway-api 4/8] COPY services/gateway-api/uv.lock ./uv.lock
+#32 CACHED
+
+#33 [gateway-api 5/8] RUN uv sync --locked --no-install-project
+#33 CACHED
+
+#34 [orchestrator 3/8] COPY services/orchestrator/pyproject.toml ./pyproject.toml
+#34 CACHED
+
+#35 [orchestrator 6/8] COPY services ./services
+#35 CACHED
+
+#36 [orchestrator 5/8] RUN uv sync --locked --no-install-project
+#36 CACHED
+
+#37 [orchestrator 4/8] COPY services/orchestrator/uv.lock ./uv.lock
+#37 CACHED
+
+#38 [orchestrator 7/8] COPY services/orchestrator/app ./app
+#38 CACHED
+
+#39 [orchestrator 8/8] RUN uv sync --locked --no-editable
+#39 CACHED
+
+#40 [scoring-service 7/8] COPY services/scoring-service/app ./app
+#40 CACHED
+
+#41 [scoring-service 4/8] COPY services/scoring-service/uv.lock ./uv.lock
+#41 CACHED
+
+#42 [scoring-service 5/8] RUN uv sync --locked --no-install-project
+#42 CACHED
+
+#43 [scoring-service 6/8] COPY services ./services
+#43 CACHED
+
+#44 [scoring-service 3/8] COPY services/scoring-service/pyproject.toml ./pyproject.toml
+#44 CACHED
+
+#45 [scoring-service 8/8] RUN uv sync --locked --no-editable
+#45 CACHED
+
+#46 [retrieval-service 4/8] COPY services/retrieval-service/uv.lock ./uv.lock
+#46 CACHED
+
+#47 [gateway-api 2/8] WORKDIR /app
+#47 CACHED
+
+#48 [retrieval-service 7/8] COPY services/retrieval-service/app ./app
+#48 CACHED
+
+#49 [retrieval-service 5/8] RUN uv sync --locked --no-install-project
+#49 CACHED
+
+#50 [retrieval-service 6/8] COPY services ./services
+#50 CACHED
+
+#51 [retrieval-service 3/8] COPY services/retrieval-service/pyproject.toml ./pyproject.toml
+#51 CACHED
+
+#52 [retrieval-service 8/8] RUN uv sync --locked --no-editable
+#52 CACHED
+
+#53 [scoring-service] exporting to image
+#53 exporting layers done
+#53 exporting manifest sha256:2e1e35e7ffc79a26d89b46c84b8d20bd1a33e29f4dc17a76a19a2adcb9eec396 done
+#53 exporting config sha256:fafb4f04c87c7827222ab681cc5f765b700997cfee4d47da1d0b36c16116c81e
+#53 ...
+
+#54 [gateway-api 6/8] COPY services ./services
+#54 DONE 0.1s
+
+#53 [scoring-service] exporting to image
+#53 exporting config sha256:fafb4f04c87c7827222ab681cc5f765b700997cfee4d47da1d0b36c16116c81e 0.0s done
+#53 exporting attestation manifest sha256:234a835af380137ed1fb5f21f61054d87e60b5ef4996784f08941dac96cfd089
+#53 exporting attestation manifest sha256:234a835af380137ed1fb5f21f61054d87e60b5ef4996784f08941dac96cfd089 0.1s done
+#53 exporting manifest list sha256:f026a44323ad896fe98258db56fa3fb1972aa1da837b69e28d3109777771ba9b 0.0s done
+#53 naming to docker.io/library/clinical-ai-platform-scoring-service:latest done
+#53 unpacking to docker.io/library/clinical-ai-platform-scoring-service:latest 0.0s done
+#53 DONE 0.2s
+
+#55 [gateway-api 7/8] COPY services/gateway-api/app ./app
+#55 DONE 0.1s
+
+#56 [ner-service] exporting to image
+#56 exporting layers done
+#56 exporting manifest sha256:63540a2ed2abf746f15a7919be9725b8c0a8fc2a5aed3432ef1f4ec50f6cbf1d done
+#56 exporting config sha256:37fb5af0027e7ddd76215e1c0af050790f8ecfac2310f9f386f034fddfc1fba9 done
+#56 exporting attestation manifest sha256:e38d3f13b6db31023005f05c237746829cb034c14042cc297e3c5dd761827980 0.1s done
+#56 exporting manifest list sha256:ceb3230b5c4d26b58c82b957243bcf4c1f2382f5edfb1cb2ea2454a2f6ac9e7c 0.0s done
+#56 naming to docker.io/library/clinical-ai-platform-ner-service:latest 0.0s done
+#56 unpacking to docker.io/library/clinical-ai-platform-ner-service:latest 0.0s done
+#56 DONE 0.2s
+
+#57 [pii-service] exporting to image
+#57 exporting layers done
+#57 exporting manifest sha256:996315a5480c1736b2188db0ee4b20663e9f6c0e7827168941798a57b0b8b06d done
+#57 exporting config sha256:4256f8944750df95c37977e2d664cd4ce5071312bf791ba99802e079d5a85593 done
+#57 exporting attestation manifest sha256:897de6f8392d9db3f45a8b346f53fa1a79d69436fda1db386827eeaa1648eb82 0.1s done
+#57 exporting manifest list sha256:001c27e11adbbd9ffb57bdce2f882b26d527feb2080994f7bb6aaf8482615555 0.0s done
+#57 naming to docker.io/library/clinical-ai-platform-pii-service:latest done
+#57 unpacking to docker.io/library/clinical-ai-platform-pii-service:latest 0.0s done
+#57 DONE 0.2s
+
+#58 [orchestrator] exporting to image
+#58 exporting layers done
+#58 exporting manifest sha256:95b747948688c9a390153605cda6a3f38507bcee6688faa8b5379de48ef5833b done
+#58 exporting config sha256:496f857d39c2e16ca686de9a446329a16002d03cad7be3cd36a69202a8736cb3 done
+#58 exporting attestation manifest sha256:81df3d0d456bb93f3cfb48019471acc1f4fb69ffb461bd0faad1c179817b260d 0.1s done
+#58 exporting manifest list sha256:2d4135dd31a27ca3505dc907f27c55999629b9283c9f5a449d8117e30ed2a114 0.0s done
+#58 naming to docker.io/library/clinical-ai-platform-orchestrator:latest 0.0s done
+#58 unpacking to docker.io/library/clinical-ai-platform-orchestrator:latest 0.0s done
+#58 DONE 0.2s
+
+#59 [retrieval-service] exporting to image
+#59 exporting layers done
+#59 exporting manifest sha256:8d1421e24a6e44f27fe947c769a2720d361b6c7fc2a771c56339ab3c701db315 0.0s done
+#59 exporting config sha256:ac0a719ec61bb6b60977f3656d31d7331341e8f4b06131b0643adb779867a773 0.0s done
+#59 exporting attestation manifest sha256:fd74ef09545e2cd72844ab25766616aabe489dab5a74d2f518753893ce2718bb 0.1s done
+#59 exporting manifest list sha256:ddf277b1612808fc36b1d5e204c57e4f236eb18ec6c6d5ca6c97ceced32de19e 0.0s done
+#59 naming to docker.io/library/clinical-ai-platform-retrieval-service:latest done
+#59 unpacking to docker.io/library/clinical-ai-platform-retrieval-service:latest
+#59 ...
+
+#60 [ner-service] resolving provenance for metadata file
+#60 DONE 0.1s
+
+#61 [orchestrator] resolving provenance for metadata file
+#61 DONE 0.1s
+
+#62 [pii-service] resolving provenance for metadata file
+#62 DONE 0.0s
+
+#63 [scoring-service] resolving provenance for metadata file
+#63 DONE 0.0s
+
+#59 [retrieval-service] exporting to image
+#59 unpacking to docker.io/library/clinical-ai-platform-retrieval-service:latest 0.3s done
+#59 DONE 0.5s
+
+#64 [retrieval-service] resolving provenance for metadata file
+#64 DONE 0.0s
+
+#65 [gateway-api 8/8] RUN uv sync --locked --no-editable
+#65 0.607 Resolved 24 packages in 15ms
+#65 0.625    Building gateway-api @ file:///app
+#65 2.566       Built gateway-api @ file:///app
+#65 2.578 Prepared 1 package in 1.95s
+#65 2.590 Installed 1 package in 11ms
+#65 2.590  + gateway-api==0.1.0 (from file:///app)
+#65 DONE 2.6s
+
+#66 [gateway-api] exporting to image
+#66 exporting layers 0.2s done
+#66 exporting manifest sha256:76d8e603962489c32ae28159113a34636a2ed7060e469507196ce182af67fca3 done
+#66 exporting config sha256:77c2455f20594440c11f84cb87258e03fd29f0767eef69b50977304c2e9ea16c done
+#66 exporting attestation manifest sha256:e8564dda70718d504f50b1f109277bdcdca0ae33d616eda8b389317d8d5425d0 0.0s done
+#66 exporting manifest list sha256:212f61658424c3536288107a30987fc3d0c3ade5875655f42e58ce1b212ffe59 done
+#66 naming to docker.io/library/clinical-ai-platform-gateway-api:latest done
+#66 unpacking to docker.io/library/clinical-ai-platform-gateway-api:latest
+#66 unpacking to docker.io/library/clinical-ai-platform-gateway-api:latest 0.2s done
+#66 DONE 0.5s
+
+#67 [gateway-api] resolving provenance for metadata file
+#67 DONE 0.0s
+ Image clinical-ai-platform-scoring-service Built 
+ Image clinical-ai-platform-orchestrator Built 
+ Image clinical-ai-platform-retrieval-service Built 
+ Image clinical-ai-platform-pii-service Built 
+ Image clinical-ai-platform-gateway-api Built 
+ Image clinical-ai-platform-ner-service Built 
