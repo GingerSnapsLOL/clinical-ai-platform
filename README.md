@@ -79,6 +79,32 @@ PYTHONPATH=.:services/gateway-api uv run pytest services/gateway-api/tests -v
 - **Strict (default)**: No internet; only local KB (Qdrant, guidelines).
 - **Hybrid**: Web search/page fetch allowed; queries de-identified; allowlist domains; content untrusted and cited.
 
+## Milestone M3 — End-to-End Pipeline
+
+The platform now supports a full request flow:
+
+gateway → orchestrator → services
+
+Pipeline:
+
+1. PII anonymization
+2. Clinical NER extraction
+3. Retrieval from Qdrant vector DB
+4. Risk scoring
+5. Response assembly
+
+Example request:
+
+```bash
+curl -X POST http://localhost:8000/v1/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode":"strict",
+    "note_text":"Patient John Doe has hypertension treated with lisinopril",
+    "question":"What are the treatment risks?"
+  }'
+```
+
 ## Layout
 
 - `services/` — gateway-api, orchestrator, pii, ner, retrieval, scoring (each with `app/`, `tests/`, `Dockerfile`, `pyproject.toml`)

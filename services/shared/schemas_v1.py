@@ -16,6 +16,7 @@ Status = Literal["ok", "error"]
 __all__ = [
     "AskRequest",
     "AskResponse",
+    "CitationItem",
     "EntityItem",
     "ErrorInfo",
     "ExtractRequest",
@@ -66,6 +67,12 @@ class SourceItem(BaseModel):
     score: float = 0.0
     metadata: Optional[Dict[str, Any]] = None
 
+
+class CitationItem(BaseModel):
+    source_id: str
+    title: Optional[str] = None
+    url: Optional[HttpUrl] = None
+
 class EntityItem(BaseModel):
     type: str
     text: str
@@ -90,6 +97,7 @@ class AskResponse(BaseModel):
     sources: List[SourceItem] = []
     entities: List[EntityItem] = []
     risk: Optional[RiskBlock] = None
+     citations: List[CitationItem] = []
     warnings: List[str] = []
     error: Optional[ErrorInfo] = None
 
@@ -135,6 +143,7 @@ class RetrieveRequest(BaseModel):
     query: str
     top_k: int = 50
     top_n: int = 8
+    rerank: bool = True
 
 class PassageItem(BaseModel):
     source_id: str

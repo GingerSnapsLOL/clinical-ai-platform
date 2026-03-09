@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import CrossEncoder, SentenceTransformer
 
 from services.shared.logging_util import set_trace_id, structured_log_middleware
 from services.shared.schemas_v1 import (
@@ -19,10 +19,12 @@ from services.shared.schemas_v1 import (
 COLLECTION_NAME = "clinical_docs"
 VECTOR_SIZE = 384
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 CHUNK_MIN_TOKENS = 300
 CHUNK_MAX_TOKENS = 500
 
 _embed_model: SentenceTransformer | None = None
+_rerank_model: CrossEncoder | None = None
 _qdrant_client: QdrantClient | None = None
 
 
@@ -135,15 +137,16 @@ app = FastAPI(title="Retrieval Service", version="0.1.0")
 app.add_middleware(structured_log_middleware("retrieval-service"))
 
 
-def _load_embed_model() -> None:
-    """Load embedding model once at startup (CPU only)."""
-    global _embed_model
+def _load_models() -> None:
+    """Load embedding and cross-encoder models once at startup (CPU only)."""
+    global _embed_model, _rerank_model
     _embed_model = SentenceTransformer(EMBED_MODEL, device="cpu")
+    _rerank_model = CrossEncoder(RERANK_MODEL, device="cpu")
 
 
 @app.on_event("startup")
 async def startup() -> None:
-    _load_embed_model()
+    _load_models()
     init_qdrant_collection()
 
 
@@ -173,28 +176,69 @@ async def retrieve(request: RetrieveRequest) -> RetrieveResponse:
         payload = h.payload or {}
         source_id = payload.get("doc_id", str(h.id))
         text = payload.get("text", "")
-        metadata = {k: v for k, v in payload.items() if k not in ("text", "doc_id")}
+
+        # Always expose key metadata fields
+        title = payload.get("title") or f"Document {source_id}"
+        source = payload.get("source") or "unknown"
+
+        extra_metadata = {k: v for k, v in payload.items() if k not in ("text", "doc_id")}
+        metadata = {
+            "doc_id": source_id,
+            "title": title,
+            "source": source,
+            **extra_metadata,
+        }
         passages.append(
             PassageItem(
                 source_id=source_id,
                 text=text,
                 score=float(h.score) if h.score is not None else 0.0,
-                metadata=metadata if metadata else None,
+                metadata=metadata,
             )
         )
 
-    # Deduplicate by (source_id, text), keep highest-scoring (order already by score desc)
-    seen: set[tuple[str, str]] = set()
+    # Deduplicate by passage text (case-insensitive), keep highest-scoring (order already by score desc)
+    seen: set[str] = set()
     unique_passages: List[PassageItem] = []
     for p in passages:
-        key = (p.source_id, p.text)
+        key = p.text.strip().lower()
         if key not in seen:
             seen.add(key)
             unique_passages.append(p)
 
+    # Optional cross-encoder reranking (query + candidate passages)
+    global _rerank_model
+    if request.rerank and _rerank_model is not None and unique_passages:
+        pairs = [(request.query, p.text) for p in unique_passages]
+        scores = _rerank_model.predict(pairs)
+
+        ranked = [
+            PassageItem(
+                source_id=p.source_id,
+                text=p.text,
+                score=float(s),
+                metadata=p.metadata,
+            )
+            for p, s in zip(unique_passages, scores)
+        ]
+        ranked.sort(key=lambda x: x.score, reverse=True)
+        reranked_passages = ranked
+    else:
+        reranked_passages = unique_passages
+
+    # Finally, limit returned passages:
+    # - If reranking is enabled, always return top 3 after reranking
+    # - Otherwise, respect top_n (fallback to all)
+    if request.rerank:
+        reranked_passages = reranked_passages[:3]
+    else:
+        top_n = getattr(request, "top_n", None)
+        if isinstance(top_n, int) and top_n > 0:
+            reranked_passages = reranked_passages[:top_n]
+
     return RetrieveResponse(
         trace_id=request.trace_id,
-        passages=unique_passages,
+        passages=reranked_passages,
     )
 
 

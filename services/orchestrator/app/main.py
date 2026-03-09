@@ -1,4 +1,5 @@
 import os
+import re
 from typing import List
 
 from fastapi import FastAPI
@@ -10,6 +11,7 @@ logger = get_logger(__name__, "orchestrator")
 from services.shared.schemas_v1 import (
     AskRequest,
     AskResponse,
+    CitationItem,
     EntityItem,
     ExtractRequest,
     ExtractResponse,
@@ -44,6 +46,79 @@ def _retrieval_url() -> str:
 def _scoring_url() -> str:
     base = os.getenv("SCORING_SERVICE_URL", "http://scoring-service:8050")
     return f"{base.rstrip('/')}/v1/score"
+
+
+def _summarize_note(text: str, max_chars: int = 400) -> str:
+    """
+    Lightweight note summary: first 1–2 sentences, truncated to max_chars.
+    Works on redacted text; avoids calling an LLM at this stage.
+    """
+    if not text:
+        return ""
+    stripped = text.strip()
+    if len(stripped) <= max_chars:
+        return stripped
+
+    # Split into sentences and keep the first couple
+    sentences = re.split(r"(?<=[.!?])\s+", stripped)
+    if not sentences:
+        return stripped[:max_chars]
+
+    summary = sentences[0]
+    if len(summary) < max_chars and len(sentences) > 1:
+        summary = f"{summary} {sentences[1]}"
+    return summary[:max_chars]
+
+
+def _entities_hint(entities: List[EntityItem], max_entities: int = 8) -> str:
+    """Render entities into a short hint string for retrieval queries."""
+    if not entities:
+        return ""
+    parts = []
+    for e in entities[:max_entities]:
+        parts.append(f"{e.type}: {e.text}")
+    return "; ".join(parts)
+
+
+def _synthesize_answer(question: str, sources: List[SourceItem], risk: RiskBlock | None) -> str:
+    """
+    Simple, deterministic answer synthesis from top passages and risk block.
+    Produces a structured markdown-style response with:
+    - summary
+    - key risks
+    - recommended monitoring
+    """
+    # Summary: use snippets from top sources
+    summary_lines: List[str] = []
+    for s in sources[:3]:
+        if s.snippet:
+            summary_lines.append(s.snippet.strip())
+    summary = " ".join(summary_lines)[:600] if summary_lines else "No guideline passages were retrieved."
+
+    # Key risks: use scoring-service label/score when available
+    risk_lines: List[str] = []
+    if risk is not None:
+        risk_lines.append(f"Overall risk is **{risk.label}** (score {risk.score:.2f}).")
+        if risk.explanation:
+            top_feats = ", ".join(feat.feature for feat in risk.explanation[:3])
+            risk_lines.append(f"Top contributing factors include: {top_feats}.")
+    else:
+        risk_lines.append("Risk score is not available for this case.")
+
+    # Recommended monitoring: heuristic text based on common cardiometabolic patterns
+    monitoring_lines: List[str] = [
+        "Monitor blood pressure regularly and titrate therapy to guideline targets.",
+        "Check renal function and electrolytes (especially potassium) after starting or changing ACE inhibitor/ARB therapy.",
+        "Reassess cardiovascular risk factors (lipids, diabetes control, smoking status) and reinforce lifestyle measures.",
+    ]
+
+    answer = (
+        f"**Question**: {question}\n\n"
+        f"### Summary\n{summary}\n\n"
+        f"### Key risks\n" + "\n".join(f"- {line}" for line in risk_lines) + "\n\n"
+        f"### Recommended monitoring\n" + "\n".join(f"- {line}" for line in monitoring_lines)
+    )
+    return answer
 
 
 def _stub_risk() -> RiskBlock:
@@ -113,15 +188,25 @@ async def ask(request: AskRequest) -> AskResponse:
         if data is not None:
             entities = data.entities
 
-        # 3) retrieval-service /v1/retrieve with user question; sources come only from here (no stubs)
+        # 3) Build enriched retrieval query from question, entities, and note summary,
+        #    then call retrieval-service /v1/retrieve (sources come only from real retrieval output).
+        enriched_query = request.question
+        ent_hint = _entities_hint(entities)
+        if ent_hint:
+            enriched_query += f"\n\nKey entities: {ent_hint}"
+        note_summary = _summarize_note(redacted_text)
+        if note_summary:
+            enriched_query += f"\n\nNote summary: {note_summary}"
+
         retrieval_data, _, _ = await post_typed(
             client,
             _retrieval_url(),
             RetrieveRequest(
                 trace_id=trace_id,
-                query=request.question,
+                query=enriched_query,
                 top_k=50,
-                top_n=8,
+                top_n=3,
+                rerank=True,
             ),
             RetrieveResponse,
             timeout=timeout,
@@ -132,7 +217,7 @@ async def ask(request: AskRequest) -> AskResponse:
             "retrieval",
             extra={
                 "trace_id": trace_id,
-                "retrieval_query": request.question,
+                "retrieval_query": enriched_query[:300],
                 "passages_returned": num_passages,
             },
         )
@@ -167,13 +252,30 @@ async def ask(request: AskRequest) -> AskResponse:
                 explanation=data.explanation,
             )
 
-    # Stub answer generation (LLM synthesis not implemented yet)
-    answer = (
-        "This is a stubbed clinical answer based on retrieved context. "
-        f"Retrieved {len(sources)} source(s) for your question. "
-        "Entities and risk were computed from the pipeline; "
-        "full answer synthesis will use an LLM in a later milestone."
-    )
+    # Simple deterministic answer synthesis from retrieved passages and risk block
+    answer = _synthesize_answer(request.question, sources, risk)
+
+    # Citations: unique source_ids with optional titles extracted from metadata or SourceItem
+    citations: List[CitationItem] = []
+    seen_ids: set[str] = set()
+    for s in sources:
+        if s.source_id in seen_ids:
+            continue
+        seen_ids.add(s.source_id)
+
+        title = s.title
+        url = s.url
+        if s.metadata:
+            title = title or s.metadata.get("title")
+            url = url or s.metadata.get("url")
+
+        citations.append(
+            CitationItem(
+                source_id=s.source_id,
+                title=title,
+                url=url,
+            )
+        )
 
     return AskResponse(
         trace_id=trace_id,
@@ -182,6 +284,7 @@ async def ask(request: AskRequest) -> AskResponse:
         entities=entities,
         sources=sources,
         risk=risk,
+        citations=citations,
     )
 
 
