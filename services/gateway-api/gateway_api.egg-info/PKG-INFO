@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: gateway-api
+Version: 0.1.0
+Summary: Gateway API for the Clinical AI Platform
+Requires-Python: >=3.11
+Requires-Dist: fastapi<0.116.0,>=0.115.0
+Requires-Dist: uvicorn[standard]<0.31.0,>=0.30.0
+Requires-Dist: httpx<0.28.0,>=0.27.0
+Requires-Dist: python-dotenv<2.0.0,>=1.0.1

@@ -1,0 +1,9 @@
+pyproject.toml
+app/__init__.py
+app/main.py
+scoring_service.egg-info/PKG-INFO
+scoring_service.egg-info/SOURCES.txt
+scoring_service.egg-info/dependency_links.txt
+scoring_service.egg-info/requires.txt
+scoring_service.egg-info/top_level.txt
+tests/test_scoring_endpoints.py

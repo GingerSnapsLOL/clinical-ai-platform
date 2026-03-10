@@ -10,6 +10,7 @@ dependencies = [
     "presidio-analyzer",
     "presidio-anonymizer",
     "spacy",
+    "pytest>=8.0.0",
 ]
 
 [build-system]

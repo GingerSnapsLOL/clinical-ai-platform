@@ -20,6 +20,7 @@ Production-style, privacy-first Clinical AI system. PII redaction, medical NER, 
 | ner-service       | 8030 | Medical entity extraction (SciSpaCy BC5CDR)          |
 | retrieval-service | 8040 | RAG (Qdrant), cross-encoder reranking, top 3 passages |
 | scoring-service   | 8050 | Risk scoring + SHAP                                  |
+| llm-service       | 8060 | LLM answer synthesis (Qwen2.5-7B-Instruct)           |
 
 **Infrastructure:** postgres (5432), redis (6379), qdrant (6333).
 
@@ -60,6 +61,7 @@ curl -X POST http://localhost:8000/v1/ask \
 | ner       | http://localhost:8030/health   |
 | retrieval | http://localhost:8040/health   |
 | scoring   | http://localhost:8050/health   |
+| llm       | http://localhost:8060/health   |
 
 ## Pipeline (M3 — End-to-End)
 
@@ -111,6 +113,7 @@ Single entrypoint. Accepts `note_text`, `question`, optional `mode` and `trace_i
 | `scripts/ingest_demo.py` | Ingest `examples/clinical_docs.json` into retrieval-service |
 | `scripts/eval_retrieval.py` | Test retrieval: `python scripts/eval_retrieval.py --query "hypertension treatment"` |
 | `scripts/demo_m1.py` | Call gateway `/v1/ask`; optional `--payload examples/ask_request.json` |
+| `scripts/demo_m4.py` | Call gateway `/v1/ask`; pretty-prints answer, citations, sources, entities, risk |
 
 ## Development
 
@@ -154,6 +157,8 @@ PYTHONPATH=.:services/retrieval-service uv run pytest services/retrieval-service
 | `NER_SERVICE_URL` | NER service base URL | `http://ner-service:8030` |
 | `RETRIEVAL_SERVICE_URL` | Retrieval service base URL | `http://retrieval-service:8040` |
 | `SCORING_SERVICE_URL` | Scoring service base URL | `http://scoring-service:8050` |
+| `LLM_BASE_URL` | LLM service base URL (orchestrator) | `http://llm-service:8060` |
+| `LLM_MODEL_NAME` | HuggingFace model ID for llm-service | `Qwen/Qwen2.5-7B-Instruct` |
 | `QDRANT_HOST`, `QDRANT_PORT` | Qdrant connection | `qdrant`, `6333` |
 | `RETRIEVAL_URL` | Used by scripts (localhost) | `http://localhost:8040` |
 
@@ -167,7 +172,8 @@ services/
   ner-service/    — SciSpaCy BC5CDR
   retrieval-service/ — Qdrant, embeddings, cross-encoder rerank
   scoring-service/
-  shared/         — schemas_v1.py, http_client, logging_util
+  llm-service/    — Qwen2.5-7B-Instruct, /v1/generate
+  shared/         — schemas_v1.py, http_client, logging_util, llm_client
 examples/         — ask_request.json, clinical_docs.json
 scripts/          — ingest_demo.py, eval_retrieval.py, demo_m1.py
 ```
@@ -184,9 +190,167 @@ scripts/          — ingest_demo.py, eval_retrieval.py, demo_m1.py
 | M1 | ✅ | Microservice architecture, `/health`, trace_id |
 | M2 | ✅ | Retrieval pipeline (ingest, retrieve, rerank, top 3) |
 | M3 | ✅ | Clinical NER (SciSpaCy), PII (Presidio), full pipeline |
-| M4 | ⬜ | LLM answer synthesis (planned) |
+| M4 | ✅ | LLM answer synthesis (Qwen2.5-7B), fallback to template |
 
-**Note:** Answer synthesis is currently deterministic (summary + risks + monitoring from passages). LLM integration is not yet implemented.
+---
+
+## M4 Verification Checklist
+
+Use these commands to verify the platform end-to-end. All services must be running (`make up` or `docker compose up -d`).
+
+### 1. Health checks (all services)
+
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8010/health
+curl http://localhost:8020/health
+curl http://localhost:8030/health
+curl http://localhost:8040/health
+curl http://localhost:8050/health
+curl http://localhost:8060/health
+```
+
+**Expected:** `status: ok` for each.
+
+### 2. PII service
+
+```bash
+curl -X POST http://localhost:8020/v1/redact \
+  -H "Content-Type: application/json" \
+  -d '{
+    "trace_id":"test-pii-1",
+    "text":"Patient John Doe phone 555-123-4567 email john@test.com has hypertension"
+  }'
+```
+
+**Expected:** `redacted_text` with `[PERSON]`, `[PHONE]`, `[EMAIL]`; `trace_id`; `status: ok`.
+
+### 3. NER service
+
+```bash
+curl -X POST http://localhost:8030/v1/extract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "trace_id":"test-ner-1",
+    "text":"Patient with hypertension treated with lisinopril"
+  }'
+```
+
+**Expected:** `hypertension` as DISEASE; `lisinopril` as CHEMICAL.
+
+### 4. Retrieval service
+
+```bash
+curl -X POST http://localhost:8040/v1/retrieve \
+  -H "Content-Type: application/json" \
+  -d '{
+    "trace_id":"test-retrieve-1",
+    "query":"ACE inhibitor risks in hypertension",
+    "top_k":5,
+    "rerank":true
+  }'
+```
+
+**Expected:** Real passages; no duplicates; `ace-lisinopril-002` or similar ACE inhibitor doc near the top.
+
+### 5. LLM service (direct)
+
+```bash
+curl -X POST http://localhost:8060/v1/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "trace_id":"test-llm-1",
+    "prompt":"Summarize: Lisinopril may cause cough, hyperkalemia, and angioedema.",
+    "max_tokens":120,
+    "temperature":0.2
+  }'
+```
+
+**Expected:** Non-empty `text`; `status: ok`.
+
+### 6. Full pipeline `/v1/ask`
+
+```bash
+curl -X POST http://localhost:8000/v1/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode":"strict",
+    "note_text":"Patient John Doe has hypertension treated with lisinopril",
+    "question":"What are the treatment risks?"
+  }'
+```
+
+**Expected:** Non-empty `answer`; `entities` include hypertension and lisinopril; `sources` present; `risk` present; `trace_id` present.
+
+### 7. Answer is not a stub
+
+Re-run the `/v1/ask` request above. The `answer` must **not** contain phrases such as:
+
+- "This is a stubbed clinical answer"
+- "full answer synthesis will use an LLM later"
+
+If such phrases appear, M4 is not complete.
+
+### 8. Sources limited to top 3
+
+Same `/v1/ask` request. For M4:
+
+- `sources` ≤ 3
+- Sources are relevant to the question
+
+### 9. Fallback when LLM is unavailable
+
+Stop the LLM service:
+
+```bash
+docker compose stop llm-service
+```
+
+Then run:
+
+```bash
+curl -X POST http://localhost:8000/v1/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode":"strict",
+    "note_text":"Patient with hypertension treated with lisinopril",
+    "question":"What are the treatment risks?"
+  }'
+```
+
+**Expected:** Pipeline does not fail; fallback answer is returned; `warnings` indicates that the LLM is unavailable.
+
+Restore the LLM service:
+
+```bash
+docker compose start llm-service
+```
+
+### 10. Final milestone criteria
+
+M4 is complete when all of the following hold:
+
+- llm-service responds on `/v1/generate`
+- `/v1/ask` returns a real generated answer (not stub)
+- Answer is grounded in retrieved context
+- `sources`, `entities`, and `risk` are all present
+- Fallback works when the LLM is stopped
+
+### Quick verification (single request)
+
+Use this request as a main check:
+
+```bash
+curl -X POST http://localhost:8000/v1/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode":"strict",
+    "note_text":"Patient John Doe has hypertension treated with lisinopril",
+    "question":"Summarize key treatment risks and monitoring considerations."
+  }'
+```
+
+**Expected:** Non-stub answer; mentions cough / hyperkalemia / angioedema; contains real `sources`.
 
 ## Docs
 

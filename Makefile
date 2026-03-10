@@ -30,6 +30,11 @@ health:
 	@curl -fsS http://localhost:8000/health >/dev/null && echo "gateway-api OK"
 	@curl -fsS http://localhost:8010/health >/dev/null && echo "orchestrator OK"
 	@curl -fsS http://localhost:8020/health >/dev/null && echo "pii-service OK"
+	@curl -fsS http://localhost:8030/health >/dev/null && echo "ner-service OK"
+	@curl -fsS http://localhost:8040/health >/dev/null && echo "retrieval-service OK"
+	@curl -fsS http://localhost:8050/health >/dev/null && echo "scoring-service OK"
+	@curl -fsS http://localhost:8060/health >/dev/null && echo "llm-service OK"
+	echo "All services OK"
 
 # Full reset: stop, no-cache rebuild, and start everything
 reset: down
@@ -38,11 +43,8 @@ reset: down
 
 test:
 	uv sync
-	PYTHONPATH=. python -m pytest services/shared/tests -v --tb=short
-	PYTHONPATH=.:services/gateway-api python -m pytest services/gateway-api/tests -v --tb=short
-	PYTHONPATH=.:services/orchestrator python -m pytest services/orchestrator/tests -v --tb=short
-	PYTHONPATH=.:services/pii-service python -m pytest services/pii-service/tests -v --tb=short
-	PYTHONPATH=.:services/ner-service python -m pytest services/ner-service/tests -v --tb=short
-	PYTHONPATH=.:services/retrieval-service python -m pytest services/retrieval-service/tests -v --tb=short
-	PYTHONPATH=.:services/scoring-service python -m pytest services/scoring-service/tests -v --tb=short
+	PYTHONPATH=. uv run pytest services/shared/tests -v --tb=short
+	@for svc in gateway-api orchestrator pii-service ner-service retrieval-service scoring-service llm-service; do \
+		(cd services/$$svc && uv sync && PYTHONPATH=$$(pwd)/../.. uv run pytest tests -v --tb=short); \
+	done
 

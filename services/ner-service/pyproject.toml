@@ -8,6 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.30.0,<0.31.0",
     "pydantic>=2.8.0,<3.0.0",
     "scispacy==0.5.4",
+    "pytest>=8.0.0",
 ]
 
 [build-system]
