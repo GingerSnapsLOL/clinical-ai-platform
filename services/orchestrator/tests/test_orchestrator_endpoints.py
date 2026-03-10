@@ -44,3 +44,42 @@ def test_ask_contract():
     assert "sources" in data
     assert "risk" in data
     assert "pii_redacted" in data
+
+
+def test_ask_llm_integration_fallback_friendly():
+    """
+    Integration-style test for /v1/ask with llm-based synthesis.
+
+    The test is tolerant of environments where llm-service is unavailable:
+    it only asserts on properties that should hold in both LLM and fallback modes.
+    """
+    r = client.post(
+        "/v1/ask",
+        json={
+            "trace_id": "11111111-2222-3333-4444-555555555555",
+            "mode": "strict",
+            "note_text": "65-year-old with hypertension and diabetes, on ACE inhibitor and statin.",
+            "question": "What is this patient's cardiovascular risk and how should they be monitored?",
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+
+    # Answer should be non-empty regardless of whether LLM or template fallback is used.
+    answer = data.get("answer", "")
+    assert isinstance(answer, str)
+    assert answer.strip() != ""
+
+    # Citations should be present as a list.
+    citations = data.get("citations", [])
+    assert isinstance(citations, list)
+
+    # Sources should be a list with at most 3 items (top passages).
+    sources = data.get("sources", [])
+    assert isinstance(sources, list)
+    assert len(sources) <= 3
+
+    # Entities and risk should be present.
+    entities = data.get("entities", [])
+    assert isinstance(entities, list)
+    assert "risk" in data

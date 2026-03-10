@@ -1,10 +1,10 @@
 SHELL := /bin/bash
 
-.PHONY: up down build rebuild lock logs ps health
+.PHONY: up down build rebuild lock logs ps health reset
 
 # Generate uv.lock in each service for reproducible Docker builds
 lock:
-	@for svc in gateway-api orchestrator pii-service ner-service retrieval-service scoring-service; do \
+	@for svc in gateway-api orchestrator pii-service ner-service retrieval-service scoring-service llm-service; do \
 		(cd services/$$svc && uv lock); \
 	done
 
@@ -30,6 +30,11 @@ health:
 	@curl -fsS http://localhost:8000/health >/dev/null && echo "gateway-api OK"
 	@curl -fsS http://localhost:8010/health >/dev/null && echo "orchestrator OK"
 	@curl -fsS http://localhost:8020/health >/dev/null && echo "pii-service OK"
+
+# Full reset: stop, no-cache rebuild, and start everything
+reset: down
+	docker compose build --no-cache
+	docker compose up -d
 
 test:
 	uv sync

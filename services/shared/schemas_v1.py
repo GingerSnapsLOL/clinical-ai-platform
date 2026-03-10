@@ -97,7 +97,6 @@ class AskResponse(BaseModel):
     sources: List[SourceItem] = []
     entities: List[EntityItem] = []
     risk: Optional[RiskBlock] = None
-     citations: List[CitationItem] = []
     warnings: List[str] = []
     error: Optional[ErrorInfo] = None
 

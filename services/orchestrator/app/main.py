@@ -2,10 +2,12 @@ import os
 import re
 from typing import List
 
+import httpx
 from fastapi import FastAPI
 
 from services.shared.http_client import create_client, get_timeout, post_typed
 from services.shared.logging_util import get_logger, set_trace_id, structured_log_middleware
+from services.shared.llm_client import LLMClient
 
 logger = get_logger(__name__, "orchestrator")
 from services.shared.schemas_v1 import (
@@ -78,6 +80,104 @@ def _entities_hint(entities: List[EntityItem], max_entities: int = 8) -> str:
     for e in entities[:max_entities]:
         parts.append(f"{e.type}: {e.text}")
     return "; ".join(parts)
+
+
+def _build_llm_prompt(
+    question: str,
+    entities: List[EntityItem],
+    sources: List[SourceItem],
+    risk: RiskBlock | None,
+    trace_id: str,
+) -> str:
+    """
+    Construct a single prompt string for llm-service from question, entities, passages, and risk.
+
+    - Uses only the top 3 passages by score.
+    - For each passage, includes source_id, title (when available), and text.
+    - Truncates the total context to a safe maximum length.
+    - Preserves deterministic ordering by descending score (stable for ties).
+    - Logs the number of passages used and total context length.
+    """
+    MAX_CONTEXT_CHARS = 6000
+
+    lines: List[str] = []
+
+    lines.append(
+        "You are a clinical decision support assistant helping clinicians reason "
+        "about cardiometabolic and cardiovascular risk. Use the provided entities, "
+        "evidence passages, and risk assessment to answer the question clearly and safely."
+    )
+    lines.append("")
+    lines.append(f"Question:\n{question}")
+
+    if entities:
+        lines.append("")
+        lines.append("Extracted entities:")
+        for e in entities[:20]:
+            lines.append(f"- {e.type}: {e.text} (span {e.start}-{e.end})")
+
+    # Context from retrieval: top 3 passages by score, deterministic order.
+    context_lines: List[str] = []
+    num_passages_used = 0
+    if sources:
+        context_lines.append("")
+        context_lines.append("Top evidence passages:")
+
+        # Sort by score descending; stable sort preserves original order for ties.
+        top_sources = sorted(sources, key=lambda s: s.score if s.score is not None else 0.0, reverse=True)[
+            :3
+        ]
+
+        for idx, s in enumerate(top_sources, start=1):
+            title = s.title or (s.metadata.get("title") if s.metadata else None)
+            header = f"Passage {idx} (source_id={s.source_id})"
+            if title:
+                header += f" - {title}"
+            context_lines.append(header + ":")
+            context_lines.append(s.snippet or "")
+            context_lines.append("")
+            num_passages_used += 1
+
+    # Risk block
+    if risk is not None:
+        context_lines.append("")
+        context_lines.append("Risk assessment:")
+        context_lines.append(f"- Overall risk label: {risk.label}")
+        context_lines.append(f"- Risk score: {risk.score:.2f}")
+        if risk.explanation:
+            context_lines.append("- Top contributing factors:")
+            for feat in risk.explanation[:5]:
+                context_lines.append(f"  - {feat.feature}: {feat.contribution:.3f}")
+
+    # Assemble context and enforce a safe maximum length.
+    context_text = "\n".join(context_lines)
+    if len(context_text) > MAX_CONTEXT_CHARS:
+        context_text = context_text[:MAX_CONTEXT_CHARS]
+
+    # Log context stats before sending to llm-service.
+    logger.info(
+        "llm_context_built",
+        extra={
+            "trace_id": trace_id,
+            "num_passages": num_passages_used,
+            "context_length": len(context_text),
+        },
+    )
+
+    if context_text:
+        lines.append("")
+        lines.append(context_text)
+
+    lines.append("")
+    lines.append(
+        "Instructions:\n"
+        "- Provide a concise, clinician-facing answer.\n"
+        "- Reference the risk level and key factors.\n"
+        "- If evidence is weak or missing, state the uncertainty.\n"
+        "- Do NOT fabricate guideline names or numeric thresholds."
+    )
+
+    return "\n".join(lines)
 
 
 def _synthesize_answer(question: str, sources: List[SourceItem], risk: RiskBlock | None) -> str:
@@ -252,8 +352,44 @@ async def ask(request: AskRequest) -> AskResponse:
                 explanation=data.explanation,
             )
 
-    # Simple deterministic answer synthesis from retrieved passages and risk block
-    answer = _synthesize_answer(request.question, sources, risk)
+    # Preferred path: synthesize answer via llm-service using retrieved context.
+    answer: str
+    try:
+        llm_client = LLMClient()
+        prompt = _build_llm_prompt(
+            question=request.question,
+            entities=entities,
+            sources=sources,
+            risk=risk,
+            trace_id=trace_id,
+        )
+        llm_resp = await llm_client.generate(
+            trace_id=trace_id,
+            prompt=prompt,
+            max_tokens=512,
+            temperature=0.2,
+        )
+        # Close client only if it owns its underlying httpx client.
+        await llm_client.aclose()
+
+        answer = llm_resp.text
+        logger.info(
+            "llm_answer_success",
+            extra={
+                "trace_id": trace_id,
+                "prompt_length": len(prompt),
+            },
+        )
+    except (httpx.HTTPError, Exception) as exc:
+        # On any LLM failure, fall back to deterministic template-based synthesis.
+        logger.warning(
+            "llm_answer_fallback",
+            extra={
+                "trace_id": trace_id,
+                "error": str(exc),
+            },
+        )
+        answer = _synthesize_answer(request.question, sources, risk)
 
     # Citations: unique source_ids with optional titles extracted from metadata or SourceItem
     citations: List[CitationItem] = []

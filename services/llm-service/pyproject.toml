@@ -1,0 +1,20 @@
+[project]
+name = "llm-service"
+version = "0.1.0"
+description = "LLM text generation service for the Clinical AI Platform (skeleton only, no model integration)."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0,<0.116.0",
+    "uvicorn[standard]>=0.30.0,<0.31.0",
+    "pydantic>=2.8.0,<3.0.0",
+    "transformers>=4.46.0,<5.0.0",
+    "torch>=2.4.0,<3.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*", "services*"]
+
