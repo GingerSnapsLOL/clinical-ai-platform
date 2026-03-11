@@ -9,7 +9,8 @@ COPY services/ner-service/pyproject.toml ./pyproject.toml
 COPY services/ner-service/uv.lock ./uv.lock
 RUN uv sync --locked --no-install-project
 
-COPY services ./services
+COPY services/shared ./services/shared
+COPY services/ner-service ./services/ner-service
 COPY services/ner-service/app ./app
 RUN uv sync --locked --no-editable
 RUN uv pip install \

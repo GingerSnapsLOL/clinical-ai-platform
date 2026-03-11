@@ -7,7 +7,8 @@ COPY services/llm-service/uv.lock ./uv.lock
 
 RUN uv sync --locked --no-install-project
 
-COPY services ./services
+COPY services/shared ./services/shared
+COPY services/llm-service ./services/llm-service
 COPY services/llm-service/app ./app
 
 RUN uv sync --locked --no-editable

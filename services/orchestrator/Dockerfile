@@ -9,7 +9,8 @@ COPY services/orchestrator/pyproject.toml ./pyproject.toml
 COPY services/orchestrator/uv.lock ./uv.lock
 RUN uv sync --locked --no-install-project
 
-COPY services ./services
+COPY services/shared ./services/shared
+COPY services/orchestrator ./services/orchestrator
 COPY services/orchestrator/app ./app
 RUN uv sync --locked --no-editable
 

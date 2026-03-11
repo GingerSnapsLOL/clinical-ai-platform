@@ -9,7 +9,8 @@ COPY services/scoring-service/pyproject.toml ./pyproject.toml
 COPY services/scoring-service/uv.lock ./uv.lock
 RUN uv sync --locked --no-install-project
 
-COPY services ./services
+COPY services/shared ./services/shared
+COPY services/scoring-service ./services/scoring-service
 COPY services/scoring-service/app ./app
 RUN uv sync --locked --no-editable
 

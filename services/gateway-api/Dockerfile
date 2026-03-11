@@ -9,7 +9,8 @@ COPY services/gateway-api/pyproject.toml ./pyproject.toml
 COPY services/gateway-api/uv.lock ./uv.lock
 RUN uv sync --locked --no-install-project
 
-COPY services ./services
+COPY services/shared ./services/shared
+COPY services/gateway-api ./services/gateway-api
 COPY services/gateway-api/app ./app
 RUN uv sync --locked --no-editable
 

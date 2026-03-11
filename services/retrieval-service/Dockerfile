@@ -9,7 +9,8 @@ COPY services/retrieval-service/pyproject.toml ./pyproject.toml
 COPY services/retrieval-service/uv.lock ./uv.lock
 RUN uv sync --locked --no-install-project
 
-COPY services ./services
+COPY services/shared ./services/shared
+COPY services/retrieval-service ./services/retrieval-service
 COPY services/retrieval-service/app ./app
 RUN uv sync --locked --no-editable
 
