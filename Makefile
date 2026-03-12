@@ -1,12 +1,15 @@
 SHELL := /bin/bash
 
-.PHONY: up down build rebuild lock logs ps health reset
+.PHONY: up down build rebuild lock logs ps health reset test base-image all
 
 # Generate uv.lock in each service for reproducible Docker builds
 lock:
 	@for svc in gateway-api orchestrator pii-service ner-service retrieval-service scoring-service llm-service; do \
 		(cd services/$$svc && uv lock); \
 	done
+
+base-image:
+	docker build -f infra/clinical-ai-base.Dockerfile -t clinical-ai-base .
 
 up:
 	docker compose up -d
@@ -47,4 +50,6 @@ test:
 	@for svc in gateway-api orchestrator pii-service ner-service retrieval-service scoring-service llm-service; do \
 		(cd services/$$svc && uv sync && PYTHONPATH=$$(pwd)/../.. uv run pytest tests -v --tb=short); \
 	done
+
+all: lock base-image build test
 

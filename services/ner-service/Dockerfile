@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+FROM clinical-ai-base
 
 WORKDIR /app
 
@@ -13,8 +13,6 @@ COPY services/shared ./services/shared
 COPY services/ner-service ./services/ner-service
 COPY services/ner-service/app ./app
 RUN uv sync --locked --no-editable
-RUN uv pip install \
-    https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_ner_bc5cdr_md-0.5.4.tar.gz
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV NER_SERVICE_PORT=8030

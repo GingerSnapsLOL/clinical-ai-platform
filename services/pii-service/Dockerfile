@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+FROM clinical-ai-base
 
 WORKDIR /app
 
@@ -13,9 +13,6 @@ COPY services/shared ./services/shared
 COPY services/pii-service ./services/pii-service
 COPY services/pii-service/app ./app
 RUN uv sync --locked --no-editable
-
-# Pre-install spaCy model so Presidio does not try to download via pip at runtime (venv has no pip).
-RUN uv pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.7.1/en_core_web_lg-3.7.1-py3-none-any.whl
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PII_SERVICE_PORT=8020
