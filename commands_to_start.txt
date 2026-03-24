@@ -1,0 +1,44 @@
+### Start Clinical AI Platform from scratch
+
+# 0) From Windows PowerShell, enter WSL
+wsl
+
+# 1) Go to project folder
+cd /home/tom/projects/clinical-ai-platform
+
+# 2) One-command startup:
+#    setup + lock + build base + build services + up
+make up
+
+# 3) (Optional) start + ingest in one command
+make up INIT=1
+
+# 4) Or run ingest separately once
+make ingest
+
+# 5) Check logs (optional)
+make logs
+
+# 6) Quick health checks
+curl http://localhost:8000/health
+curl http://localhost:8010/health
+curl http://localhost:8020/health
+curl http://localhost:8030/health
+curl http://localhost:8040/health
+curl http://localhost:8050/health
+curl http://localhost:8060/health
+
+# 7) Test end-to-end ask API
+curl -X POST http://localhost:8000/v1/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode": "strict",
+    "note_text": "Patient John Doe has hypertension treated with lisinopril",
+    "question": "What are the treatment risks?"
+  }'
+
+# Stop everything later
+make down
+
+# Optional: run full local test suite (uv-based)
+make test
