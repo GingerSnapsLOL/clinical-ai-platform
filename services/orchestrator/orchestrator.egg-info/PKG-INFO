@@ -1,9 +1,0 @@
-Metadata-Version: 2.4
-Name: orchestrator
-Version: 0.1.0
-Summary: LangGraph-based orchestrator for the Clinical AI Platform (stubbed for Milestone 0)
-Requires-Python: >=3.11
-Requires-Dist: fastapi<0.116.0,>=0.115.0
-Requires-Dist: uvicorn[standard]<0.31.0,>=0.30.0
-Requires-Dist: pydantic<3.0.0,>=2.8.0
-Requires-Dist: httpx<0.28.0,>=0.27.0

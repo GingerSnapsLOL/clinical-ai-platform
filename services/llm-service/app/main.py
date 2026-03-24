@@ -106,13 +106,32 @@ async def generate(request: GenerateRequest) -> GenerateResponse:
         # Should not happen in normal operation; startup should have failed fast.
         raise RuntimeError("LLM model is not loaded")
 
-    # Build a simple chat-style prompt for Qwen Instruct
-    prompt_text = request.prompt
-
-    input_ids = tokenizer(
-        prompt_text,
-        return_tensors="pt",
-    ).to(model.device)
+    # Qwen2.5-Instruct is trained with a chat template. Feeding the orchestrator's long
+    # instruction block as raw text often yields meta-preambles (e.g. "In 100 words.").
+    raw_prompt = request.prompt
+    chat_tmpl = getattr(tokenizer, "chat_template", None)
+    apply_tmpl = getattr(tokenizer, "apply_chat_template", None)
+    if (
+        isinstance(chat_tmpl, str)
+        and chat_tmpl.strip()
+        and callable(apply_tmpl)
+    ):
+        messages = [{"role": "user", "content": raw_prompt}]
+        prompt_text = apply_tmpl(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        input_ids = tokenizer(
+            prompt_text,
+            return_tensors="pt",
+            add_special_tokens=False,
+        ).to(model.device)
+    else:
+        input_ids = tokenizer(
+            raw_prompt,
+            return_tensors="pt",
+        ).to(model.device)
 
     generation_kwargs = {
         "max_new_tokens": request.max_tokens,

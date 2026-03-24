@@ -1,10 +1,47 @@
-# Local venv - platform-specific, built fresh in image
+# Python virtualenvs (rebuilt inside images)
 .venv/
 venv/
+**/.venv/
+**/venv/
+
+# Python artifacts
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+**/__pycache__/
+**/*.pyc
+
+# VCS and editor config
 .git/
-*.md
+.gitignore
+**/.git/
+.vscode/
+.idea/
+
+# Test caches and coverage
 .pytest_cache/
 .coverage
 htmlcov/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Local tooling / IDE metadata
+.cursor/
+
+# Logs and build artefacts
+*.log
+build/
+dist/
+**/build/
+**/dist/
+pip-wheel-metadata/
+
+# Docs are not needed in Docker context
+*.md
+
+# Test and notebook files are not needed in runtime images
+**/tests/
+**/.ipynb_checkpoints/

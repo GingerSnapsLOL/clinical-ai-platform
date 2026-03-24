@@ -8,7 +8,7 @@ import httpx
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SCRIPT_DIR.parent
-DOCS_PATH = ROOT_DIR / "examples" / "clinical_docs.json"
+DOCS_PATH = ROOT_DIR / "examples" / "clinical_docs_extended.json"
 RETRIEVAL_URL = os.getenv("RETRIEVAL_URL", "http://localhost:8040")
 
 

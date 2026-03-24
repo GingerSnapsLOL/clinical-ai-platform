@@ -10,9 +10,10 @@ COPY services/pii-service/uv.lock ./uv.lock
 RUN uv sync --locked --no-install-project
 
 COPY services/shared ./services/shared
-COPY services/pii-service ./services/pii-service
 COPY services/pii-service/app ./app
-RUN uv sync --locked --no-editable
+RUN uv sync --locked --no-install-project && \
+    uv pip install \
+    https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.7.1/en_core_web_lg-3.7.1-py3-none-any.whl
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PII_SERVICE_PORT=8020

@@ -1,9 +1,0 @@
-pyproject.toml
-app/__init__.py
-app/main.py
-retrieval_service.egg-info/PKG-INFO
-retrieval_service.egg-info/SOURCES.txt
-retrieval_service.egg-info/dependency_links.txt
-retrieval_service.egg-info/requires.txt
-retrieval_service.egg-info/top_level.txt
-tests/test_retrieval_endpoints.py

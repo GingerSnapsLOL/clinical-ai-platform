@@ -1,5 +1,6 @@
 import os
 import re
+import uuid
 from typing import Any, Dict, List
 
 from fastapi import FastAPI
@@ -133,6 +134,11 @@ def _chunk_text(text: str, doc_id: str, metadata: Dict[str, Any]) -> List[tuple[
     return chunks
 
 
+def _stable_point_uuid(doc_id: str, chunk_index: int) -> str:
+    """Return deterministic UUID accepted by Qdrant for point IDs."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{doc_id}::{chunk_index}"))
+
+
 app = FastAPI(title="Retrieval Service", version="0.1.0")
 app.add_middleware(structured_log_middleware("retrieval-service"))
 
@@ -254,7 +260,7 @@ async def ingest(request: IngestRequest) -> IngestResponse:
     for doc in request.documents:
         for chunk_index, chunk_text, payload in _chunk_text(doc.text, doc.doc_id, doc.metadata):
             # Stable point ID for idempotent ingestion: re-ingesting same doc overwrites
-            point_id = f"{doc.doc_id}::{chunk_index}"
+            point_id = _stable_point_uuid(doc.doc_id, chunk_index)
             embedding = embed_text(chunk_text)
             points.append(
                 PointStruct(

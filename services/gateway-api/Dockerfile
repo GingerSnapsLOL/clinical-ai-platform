@@ -10,9 +10,8 @@ COPY services/gateway-api/uv.lock ./uv.lock
 RUN uv sync --locked --no-install-project
 
 COPY services/shared ./services/shared
-COPY services/gateway-api ./services/gateway-api
 COPY services/gateway-api/app ./app
-RUN uv sync --locked --no-editable
+RUN uv sync --locked --no-install-project
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV GATEWAY_PORT=8000

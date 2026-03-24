@@ -10,9 +10,8 @@ COPY services/retrieval-service/uv.lock ./uv.lock
 RUN uv sync --locked --no-install-project
 
 COPY services/shared ./services/shared
-COPY services/retrieval-service ./services/retrieval-service
 COPY services/retrieval-service/app ./app
-RUN uv sync --locked --no-editable
+RUN uv sync --locked --no-install-project
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV RETRIEVAL_SERVICE_PORT=8040

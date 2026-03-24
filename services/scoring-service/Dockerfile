@@ -10,9 +10,8 @@ COPY services/scoring-service/uv.lock ./uv.lock
 RUN uv sync --locked --no-install-project
 
 COPY services/shared ./services/shared
-COPY services/scoring-service ./services/scoring-service
 COPY services/scoring-service/app ./app
-RUN uv sync --locked --no-editable
+RUN uv sync --locked --no-install-project
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV SCORING_SERVICE_PORT=8050

@@ -56,32 +56,63 @@ For architecture and long-term plans, see:
 - **Python**: 3.11+
 - **uv**: for dependency management (optional if you only use Docker).
 - **Docker + Docker Compose**: to run the full stack locally.
+- **make**: to use the provided `Makefile` targets.
 - **Hardware note**:
   - `llm-service` downloads and serves `Qwen/Qwen2.5-7B-Instruct`.  
   - On CPU-only machines, startup and inference will be slow; on GPUs with enough memory, `torch.cuda.is_available()` is used for float16.
 
+#### How to install prerequisites (high level)
+
+- **Python 3.11+**
+  - Linux/macOS: use your package manager or `pyenv` (e.g. `pyenv install 3.11.8`).
+  - Windows: use the official installer from `https://www.python.org` or the Microsoft Store.
+
+- **uv**
+
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+
+  Or see the official instructions at `https://docs.astral.sh/uv/`.
+
+- **Docker + Docker Compose**
+  - Install Docker Desktop (Windows/macOS) or Docker Engine + Compose plugin (Linux) from `https://docs.docker.com/get-docker/`.
+  - Verify:
+
+    ```bash
+    docker --version
+    docker compose version
+    ```
+
+- **make**
+  - Linux: usually available via `build-essential`/`make` package (e.g. `sudo apt install make`).
+  - macOS: install Xcode Command Line Tools (`xcode-select --install`).
+  - Windows: use `make` from WSL (recommended) or install via a package manager like Chocolatey/MSYS2.
+
 ### 1. Environment and dependencies
 
-- **Docker-first path (recommended for demos)**
+- **Docker + Make (recommended)**
   - Copy environment:
 
     ```bash
     cp .env.example .env
     ```
 
-  - Build the shared base image (once):
+  - Build locks, base image, all service images and run tests in one step:
 
     ```bash
-    docker build -f infra/clinical-ai-base.Dockerfile -t clinical-ai-base .
+    make all
     ```
 
-  - Bring up the stack:
+  - Start or restart the stack:
 
     ```bash
-    docker compose up --build
+    make up      # docker compose up -d
+    make logs    # follow logs
+    make down    # stop and remove volumes
     ```
 
-- **Python dev setup (optional)**
+- **Python dev setup (optional, for local uv runs)**
 
   ```bash
   uv sync

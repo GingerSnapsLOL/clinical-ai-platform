@@ -1,18 +1,27 @@
 SHELL := /bin/bash
 
-.PHONY: up down build rebuild lock logs ps health reset test base-image all
+.PHONY: setup up init down build rebuild lock logs ps health reset test ingest base-image all ci
+
+SERVICES := gateway-api orchestrator pii-service ner-service retrieval-service scoring-service llm-service
 
 # Generate uv.lock in each service for reproducible Docker builds
 lock:
-	@for svc in gateway-api orchestrator pii-service ner-service retrieval-service scoring-service llm-service; do \
+	@for svc in $(SERVICES); do \
 		(cd services/$$svc && uv lock); \
 	done
 
 base-image:
 	docker build -f infra/clinical-ai-base.Dockerfile -t clinical-ai-base .
 
-up:
+setup:
+	@if [ ! -f .env ]; then cp .env.example .env; fi
+	uv sync
+
+up: setup lock base-image build
 	docker compose up -d
+	@if [ "$(INIT)" = "1" ]; then $(MAKE) ingest; fi
+
+init: ingest
 
 rebuild: lock
 	docker compose up -d --build
@@ -47,9 +56,16 @@ reset: down
 test:
 	uv sync
 	PYTHONPATH=. uv run pytest services/shared/tests -v --tb=short
-	@for svc in gateway-api orchestrator pii-service ner-service retrieval-service scoring-service llm-service; do \
+	@for svc in $(SERVICES); do \
 		(cd services/$$svc && uv sync && PYTHONPATH=$$(pwd)/../.. uv run pytest tests -v --tb=short); \
 	done
 
-all: lock base-image build test
+ingest:
+	uv run python scripts/ingest_demo.py
+
+# Docker-first build path (no local tests)
+all: lock base-image build
+
+# CI path (includes local uv tests)
+ci: all test
 

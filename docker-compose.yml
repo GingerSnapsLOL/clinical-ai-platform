@@ -1,6 +1,12 @@
 name: clinical-ai-platform
 
 services:
+  base:
+    build:
+      context: .
+      dockerfile: ./infra/clinical-ai-base.Dockerfile
+    image: clinical-ai-base
+
   postgres:
     image: postgres:16
     environment:
@@ -48,6 +54,8 @@ services:
     ports:
       - "8000:8000"
     depends_on:
+      base:
+        condition: service_started
       postgres:
         condition: service_healthy
       redis:
@@ -77,6 +85,8 @@ services:
     ports:
       - "8010:8010"
     depends_on:
+      base:
+        condition: service_started
       qdrant:
         condition: service_started
       postgres:
@@ -102,6 +112,9 @@ services:
       context: .
       dockerfile: ./services/pii-service/Dockerfile
     env_file: .env
+    depends_on:
+      base:
+        condition: service_started
     ports:
       - "8020:8020"
     healthcheck:
@@ -115,6 +128,9 @@ services:
       context: .
       dockerfile: ./services/ner-service/Dockerfile
     env_file: .env
+    depends_on:
+      base:
+        condition: service_started
     ports:
       - "8030:8030"
     healthcheck:
@@ -134,6 +150,8 @@ services:
     ports:
       - "8040:8040"
     depends_on:
+      base:
+        condition: service_started
       qdrant:
         condition: service_started
     healthcheck:
@@ -147,6 +165,9 @@ services:
       context: .
       dockerfile: ./services/scoring-service/Dockerfile
     env_file: .env
+    depends_on:
+      base:
+        condition: service_started
     ports:
       - "8050:8050"
     healthcheck:
@@ -160,6 +181,9 @@ services:
       context: .
       dockerfile: ./services/llm-service/Dockerfile
     env_file: .env
+    depends_on:
+      base:
+        condition: service_started
     environment:
       LLM_MODEL_NAME: ${LLM_MODEL_NAME:-Qwen/Qwen2.5-7B-Instruct}
     ports:

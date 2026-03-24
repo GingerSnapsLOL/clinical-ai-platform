@@ -10,9 +10,8 @@ COPY services/orchestrator/uv.lock ./uv.lock
 RUN uv sync --locked --no-install-project
 
 COPY services/shared ./services/shared
-COPY services/orchestrator ./services/orchestrator
 COPY services/orchestrator/app ./app
-RUN uv sync --locked --no-editable
+RUN uv sync --locked --no-install-project
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV ORCHESTRATOR_PORT=8010

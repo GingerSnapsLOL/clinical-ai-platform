@@ -92,7 +92,8 @@ def _build_llm_prompt(
     """
     Construct a single prompt string for llm-service from question, entities, passages, and risk.
 
-    - Uses only the top 3 passages by score.
+    Strict grounding: the model must answer using only the "Top evidence passages" text.
+    - Uses only the top 3 passages by score for evidence text.
     - For each passage, includes source_id, title (when available), and text.
     - Truncates the total context to a safe maximum length.
     - Preserves deterministic ordering by descending score (stable for ties).
@@ -103,9 +104,12 @@ def _build_llm_prompt(
     lines: List[str] = []
 
     lines.append(
-        "You are a clinical decision support assistant helping clinicians reason "
-        "about cardiometabolic and cardiovascular risk. Use the provided entities, "
-        "evidence passages, and risk assessment to answer the question clearly and safely."
+        "You are a clinical decision support assistant. Your answer must follow strict "
+        "grounding rules below. All clinical and factual content in your answer must come "
+        "only from the section titled 'Top evidence passages.' Do not use general medical "
+        "knowledge, guidelines you were trained on, or inference beyond what is explicitly "
+        "written there. Extracted entities and risk scores are auxiliary context only: do not "
+        "state any fact that is not directly supported by wording in those passages."
     )
     lines.append("")
     lines.append(f"Question:\n{question}")
@@ -138,10 +142,13 @@ def _build_llm_prompt(
             context_lines.append("")
             num_passages_used += 1
 
-    # Risk block
+    # Risk block (not retrieval-grounded; included for alignment only)
     if risk is not None:
         context_lines.append("")
-        context_lines.append("Risk assessment:")
+        context_lines.append(
+            "Risk assessment (not part of evidence passages — do not use in the answer "
+            "unless the same facts appear verbatim or by clear paraphrase in Top evidence passages above):"
+        )
         context_lines.append(f"- Overall risk label: {risk.label}")
         context_lines.append(f"- Risk score: {risk.score:.2f}")
         if risk.explanation:
@@ -170,11 +177,17 @@ def _build_llm_prompt(
 
     lines.append("")
     lines.append(
-        "Instructions:\n"
-        "- Provide a concise, clinician-facing answer.\n"
-        "- Reference the risk level and key factors.\n"
-        "- If evidence is weak or missing, state the uncertainty.\n"
-        "- Do NOT fabricate guideline names or numeric thresholds."
+        "Instructions (strict grounding — follow in order):\n"
+        "1. Answer the question using ONLY information explicitly stated in "
+        "'Top evidence passages' above. Quote or paraphrase only what appears there.\n"
+        "2. If there are no evidence passages, or the passages do not contain enough "
+        "information to answer the question, respond with exactly this single line and nothing else:\n"
+        "Insufficient data\n"
+        "3. Do NOT add facts, drug names, doses, guideline names, pathophysiology, or "
+        "treatment recommendations unless they appear in those passages.\n"
+        "4. Do NOT infer, speculate, or fill gaps with external or prior knowledge. "
+        "If the question cannot be answered from the passages alone, output only: Insufficient data\n"
+        "5. Keep the answer concise and clinician-facing when you do answer from passages."
     )
 
     return "\n".join(lines)
@@ -232,6 +245,50 @@ def _stub_risk() -> RiskBlock:
     )
 
 
+def _retrieval_relevance_gate_enabled() -> bool:
+    """When false, skip score/snippet gating (retrieval still runs)."""
+    raw = os.getenv("ORCHESTRATOR_RETRIEVAL_RELEVANCE_GATE", "true").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _retrieval_meets_relevance_bar(sources: List[SourceItem]) -> tuple[bool, float, str]:
+    """
+    Decide whether retrieved evidence is strong enough to call the LLM.
+
+    Returns (accept, top_score, reason). reason is empty when accept is True.
+    When accept is False, answer must be refusal only (no LLM / no template synthesis).
+
+    Scores are cross-encoder logits when retrieval uses rerank=True (default in ask).
+    Tune ORCHESTRATOR_RETRIEVAL_MIN_TOP_SCORE for your stack (e.g. lower ~0.35 if using
+    cosine-only retrieval without rerank).
+    """
+    if not _retrieval_relevance_gate_enabled():
+        top = max((float(s.score) for s in sources if s.score is not None), default=0.0)
+        return True, top, ""
+
+    if not sources:
+        return False, 0.0, "no_passages"
+
+    min_score = float(os.getenv("ORCHESTRATOR_RETRIEVAL_MIN_TOP_SCORE", "1.0"))
+    min_snippet = int(os.getenv("ORCHESTRATOR_RETRIEVAL_MIN_TOP_SNIPPET_CHARS", "24"))
+
+    top = max(
+        sources,
+        key=lambda s: float(s.score) if s.score is not None else float("-inf"),
+    )
+    top_score_l = float(top.score) if top.score is not None else float("-inf")
+    top_score = top_score_l if top_score_l != float("-inf") else 0.0
+
+    if top_score_l < min_score:
+        return False, top_score, "below_min_score"
+
+    snippet = (top.snippet or "").strip()
+    if len(snippet) < min_snippet:
+        return False, top_score, "weak_snippet"
+
+    return True, top_score, ""
+
+
 app = FastAPI(title="Clinical AI Orchestrator", version="0.1.0")
 app.add_middleware(structured_log_middleware("orchestrator"))
 
@@ -251,6 +308,7 @@ async def ask(request: AskRequest) -> AskResponse:
     trace_id = request.trace_id
     set_trace_id(trace_id)
     timeout = get_timeout()
+    warnings: List[str] = []
 
     # 1) PII redaction
     redacted_text = request.note_text
@@ -352,44 +410,56 @@ async def ask(request: AskRequest) -> AskResponse:
                 explanation=data.explanation,
             )
 
-    # Preferred path: synthesize answer via llm-service using retrieved context.
-    answer: str
-    try:
-        llm_client = LLMClient()
-        prompt = _build_llm_prompt(
-            question=request.question,
-            entities=entities,
-            sources=sources,
-            risk=risk,
-            trace_id=trace_id,
-        )
-        llm_resp = await llm_client.generate(
-            trace_id=trace_id,
-            prompt=prompt,
-            max_tokens=512,
-            temperature=0.2,
-        )
-        # Close client only if it owns its underlying httpx client.
-        await llm_client.aclose()
-
-        answer = llm_resp.text
+    # Relevance gate: refuse before LLM when retrieval is empty or scores/snippets are weak.
+    accept_retrieval, top_rel_score, relevance_reason = _retrieval_meets_relevance_bar(sources)
+    if not accept_retrieval:
+        warnings.append(f"retrieval_relevance:{relevance_reason}")
         logger.info(
-            "llm_answer_success",
+            "retrieval_relevance_reject",
             extra={
                 "trace_id": trace_id,
-                "prompt_length": len(prompt),
+                "top_score": top_rel_score,
+                "reason": relevance_reason,
             },
         )
-    except (httpx.HTTPError, Exception) as exc:
-        # On any LLM failure, fall back to deterministic template-based synthesis.
-        logger.warning(
-            "llm_answer_fallback",
-            extra={
-                "trace_id": trace_id,
-                "error": str(exc),
-            },
-        )
-        answer = _synthesize_answer(request.question, sources, risk)
+        answer = "Insufficient data"
+    else:
+        # Preferred path: synthesize answer via llm-service using retrieved context.
+        try:
+            llm_client = LLMClient()
+            prompt = _build_llm_prompt(
+                question=request.question,
+                entities=entities,
+                sources=sources,
+                risk=risk,
+                trace_id=trace_id,
+            )
+            llm_resp = await llm_client.generate(
+                trace_id=trace_id,
+                prompt=prompt,
+                max_tokens=512,
+                temperature=0.2,
+            )
+            await llm_client.aclose()
+
+            answer = llm_resp.text
+            logger.info(
+                "llm_answer_success",
+                extra={
+                    "trace_id": trace_id,
+                    "prompt_length": len(prompt),
+                },
+            )
+        except (httpx.HTTPError, Exception) as exc:
+            # On any LLM failure, fall back to deterministic template-based synthesis.
+            logger.warning(
+                "llm_answer_fallback",
+                extra={
+                    "trace_id": trace_id,
+                    "error": str(exc),
+                },
+            )
+            answer = _synthesize_answer(request.question, sources, risk)
 
     # Citations: unique source_ids with optional titles extracted from metadata or SourceItem
     citations: List[CitationItem] = []
@@ -421,6 +491,7 @@ async def ask(request: AskRequest) -> AskResponse:
         sources=sources,
         risk=risk,
         citations=citations,
+        warnings=warnings,
     )
 
 
