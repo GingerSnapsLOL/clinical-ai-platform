@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
-const BACKEND_BASE_URL = process.env.BACKEND_BASE_URL ?? "http://localhost:8000";
+const BACKEND_BASE_URL =
+  process.env.BACKEND_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL;
 
 export async function POST(request: Request) {
+  if (!BACKEND_BASE_URL) {
+    return NextResponse.json(
+      { error: "Backend API URL is not configured." },
+      { status: 500 }
+    );
+  }
+
   let body: unknown;
   try {
     body = await request.json();

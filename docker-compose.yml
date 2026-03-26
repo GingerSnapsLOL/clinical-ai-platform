@@ -68,6 +68,17 @@ services:
       timeout: 5s
       retries: 30
 
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://gateway-api:8000
+    depends_on:
+      - gateway-api
+    restart: always
+
   orchestrator:
     build:
       context: .

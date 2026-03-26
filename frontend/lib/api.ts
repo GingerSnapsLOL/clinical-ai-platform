@@ -1,11 +1,15 @@
 import type { AskRequest, AskResponse } from "@/lib/types";
 
-const ASK_ENDPOINT = "/api/ask";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 export async function askClinicalQuestion(
   payload: AskRequest
 ): Promise<AskResponse> {
-  const response = await fetch(ASK_ENDPOINT, {
+  if (!API_BASE_URL) {
+    throw new Error("NEXT_PUBLIC_API_URL is not configured.");
+  }
+
+  const response = await fetch(`${API_BASE_URL}/v1/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

@@ -25,6 +25,13 @@ For architecture and long-term plans, see:
   - Coordinates the full ask pipeline.
   - Calls PII redaction, NER extraction, retrieval, risk scoring, and answer generation services.
   - Aggregates downstream outputs into one response for gateway/frontends.
+  - Design note:
+    - I evaluated LangChain/LangGraph, but chose a custom orchestration layer because:
+      - I needed full control over pipeline execution.
+      - I wanted predictable latency and service boundaries.
+      - I wanted simple debugging and observability.
+      - I wanted to avoid deep framework lock-in.
+    - For prototyping or quick agent demos, LangChain is useful, but for production systems I prefer explicit design.
 
 - **PII Service (`:8020`)**
   - Endpoint: `POST /v1/redact`.
@@ -263,6 +270,15 @@ From repo root:
 ```bash
 make frontend-install
 make frontend-dev
+```
+
+`make up` also starts the frontend container now (via `docker-compose.yml`), so you can run the full stack with one command.
+
+Quick verification:
+
+```bash
+docker compose ps
+docker compose logs -f frontend
 ```
 
 Or directly:
