@@ -1,6 +1,10 @@
+import asyncio
+import hashlib
+import json
 import os
 import re
-from typing import List
+import time
+from typing import Any, List, Optional
 
 import httpx
 from fastapi import FastAPI
@@ -8,6 +12,11 @@ from fastapi import FastAPI
 from services.shared.http_client import create_client, get_timeout, post_typed
 from services.shared.logging_util import get_logger, set_trace_id, structured_log_middleware
 from services.shared.llm_client import LLMClient
+
+try:
+    from redis.asyncio import Redis  # type: ignore
+except Exception:  # pragma: no cover
+    Redis = None  # type: ignore[assignment]
 
 logger = get_logger(__name__, "orchestrator")
 from services.shared.schemas_v1 import (
@@ -28,6 +37,97 @@ from services.shared.schemas_v1 import (
     ScoreResponse,
     SourceItem,
 )
+
+_redis_client: Optional["Redis"] = None
+
+
+def _cache_enabled() -> bool:
+    raw = os.getenv("ORCHESTRATOR_CACHE_ENABLED", "false").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _redis_url() -> str:
+    url = os.getenv("REDIS_URL")
+    if url:
+        return url
+    host = os.getenv("REDIS_HOST", "redis")
+    port = int(os.getenv("REDIS_PORT", "6379"))
+    db = int(os.getenv("REDIS_DB", "0"))
+    return f"redis://{host}:{port}/{db}"
+
+
+def _retrieval_cache_ttl_sec() -> int:
+    return int(os.getenv("ORCHESTRATOR_RETRIEVAL_CACHE_TTL_SEC", "300"))
+
+
+def _answer_cache_ttl_sec() -> int:
+    return int(os.getenv("ORCHESTRATOR_ANSWER_CACHE_TTL_SEC", "900"))
+
+
+def _normalize_text_key(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+def _sha256_hex(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _note_text_hash(note_text: str) -> str:
+    return hashlib.sha256((note_text or "").encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _retrieval_cache_key(query: str, top_k: int, top_n: int, rerank: bool) -> str:
+    norm = _normalize_text_key(query)
+    payload = f"v1|q={norm}|top_k={top_k}|top_n={top_n}|rerank={int(rerank)}"
+    return f"orchestrator:retrieval:{_sha256_hex(payload)}"
+
+
+def _answer_cache_key(question: str, note_hash: str, top_source_ids: list[str], model_name: str) -> str:
+    qn = _normalize_text_key(question)
+    ids = ",".join(top_source_ids)
+    payload = f"v1|q={qn}|note={note_hash}|ids={ids}|model={model_name}"
+    return f"orchestrator:answer:{_sha256_hex(payload)}"
+
+
+async def _get_redis() -> Optional["Redis"]:
+    global _redis_client
+    if not _cache_enabled():
+        return None
+    if Redis is None:
+        return None
+    if _redis_client is None:
+        _redis_client = Redis.from_url(_redis_url(), decode_responses=True)
+    return _redis_client
+
+
+async def _cache_get_json(trace_id: str, key: str) -> Optional[dict[str, Any]]:
+    r = await _get_redis()
+    if r is None:
+        return None
+    try:
+        raw = await r.get(key)
+        if not raw:
+            return None
+        return json.loads(raw)
+    except Exception as exc:
+        logger.warning(
+            "cache_get_error",
+            extra={"trace_id": trace_id, "key": key, "error": str(exc)},
+        )
+        return None
+
+
+async def _cache_set_json(trace_id: str, key: str, value: dict[str, Any], ttl_sec: int) -> None:
+    r = await _get_redis()
+    if r is None:
+        return
+    try:
+        await r.set(key, json.dumps(value, separators=(",", ":")), ex=ttl_sec)
+    except Exception as exc:
+        logger.warning(
+            "cache_set_error",
+            extra={"trace_id": trace_id, "key": key, "error": str(exc)},
+        )
 
 
 def _pii_url() -> str:
@@ -301,14 +401,34 @@ async def health() -> HealthResponse:
 @app.post("/v1/ask", response_model=AskResponse)
 async def ask(request: AskRequest) -> AskResponse:
     """
-    Call services in order: pii-service -> ner-service -> retrieval-service -> scoring-service.
+    Call services in order, parallelizing independent stages where safe:
+
+    - Sequential: pii-service -> ner-service
+      Reason: ner-service runs on redacted text from pii-service.
+
+    - Parallel after NER: retrieval-service + scoring-service
+      Reason: retrieval uses (question + entities + note summary) while scoring uses entities only,
+      and scoring does not depend on retrieval output.
+
     Aggregate results into AskResponse. Answer text is stub for now.
     Returns: answer, entities, sources, risk, trace_id (and pii_redacted).
     """
     trace_id = request.trace_id
     set_trace_id(trace_id)
+    t_request_start = time.perf_counter()
     timeout = get_timeout()
     warnings: List[str] = []
+
+    pii_duration_ms: float = 0.0
+    ner_duration_ms: float = 0.0
+    retrieval_duration_ms: float = 0.0
+    scoring_duration_ms: float = 0.0
+    llm_duration_ms: float = 0.0
+    fallback_synthesis_duration_ms: float = 0.0
+    fallback_used: bool = False
+    accept_retrieval: bool = False
+    retrieval_cache_hit: bool = False
+    answer_cache_hit: bool = False
 
     # 1) PII redaction
     redacted_text = request.note_text
@@ -322,6 +442,7 @@ async def ask(request: AskRequest) -> AskResponse:
 
     async with create_client(timeout=timeout) as client:
         # 1) pii-service /v1/redact (trace_id in body + header)
+        pii_t0 = time.perf_counter()
         data, _, _ = await post_typed(
             client,
             _pii_url(),
@@ -330,11 +451,17 @@ async def ask(request: AskRequest) -> AskResponse:
             timeout=timeout,
             trace_id=trace_id,
         )
+        pii_duration_ms = (time.perf_counter() - pii_t0) * 1000.0
+        logger.info(
+            "latency_pii_service",
+            extra={"trace_id": trace_id, "duration_ms": pii_duration_ms},
+        )
         if data is not None:
             redacted_text = data.redacted_text
             pii_redacted = True
 
         # 2) ner-service /v1/extract (input: redacted text from step 1)
+        ner_t0 = time.perf_counter()
         data, _, _ = await post_typed(
             client,
             _ner_url(),
@@ -343,11 +470,15 @@ async def ask(request: AskRequest) -> AskResponse:
             timeout=timeout,
             trace_id=trace_id,
         )
+        ner_duration_ms = (time.perf_counter() - ner_t0) * 1000.0
+        logger.info(
+            "latency_ner_service",
+            extra={"trace_id": trace_id, "duration_ms": ner_duration_ms},
+        )
         if data is not None:
             entities = data.entities
 
-        # 3) Build enriched retrieval query from question, entities, and note summary,
-        #    then call retrieval-service /v1/retrieve (sources come only from real retrieval output).
+        # 3) Build enriched retrieval query from question, entities, and note summary.
         enriched_query = request.question
         ent_hint = _entities_hint(entities)
         if ent_hint:
@@ -356,21 +487,91 @@ async def ask(request: AskRequest) -> AskResponse:
         if note_summary:
             enriched_query += f"\n\nNote summary: {note_summary}"
 
-        retrieval_data, _, _ = await post_typed(
-            client,
-            _retrieval_url(),
-            RetrieveRequest(
+        async def _run_retrieval() -> RetrieveResponse | None:
+            nonlocal retrieval_duration_ms
+            nonlocal retrieval_cache_hit
+            retrieval_t0 = time.perf_counter()
+            cache_key = _retrieval_cache_key(enriched_query, top_k=50, top_n=3, rerank=True)
+            cached = await _cache_get_json(trace_id, cache_key)
+            if cached is not None and cached.get("v") == 1 and "retrieval" in cached:
+                try:
+                    retrieval_cache_hit = True
+                    logger.info(
+                        "retrieval_cache_hit",
+                        extra={"trace_id": trace_id, "key": cache_key},
+                    )
+                    parsed = RetrieveResponse.model_validate(cached["retrieval"])
+                    retrieval_duration_ms = (time.perf_counter() - retrieval_t0) * 1000.0
+                    logger.info(
+                        "latency_retrieval_service",
+                        extra={"trace_id": trace_id, "duration_ms": retrieval_duration_ms},
+                    )
+                    return parsed
+                except Exception:
+                    retrieval_cache_hit = False
+
+            logger.info(
+                "retrieval_cache_miss",
+                extra={"trace_id": trace_id, "key": cache_key},
+            )
+            retrieval_data, _, _ = await post_typed(
+                client,
+                _retrieval_url(),
+                RetrieveRequest(
+                    trace_id=trace_id,
+                    query=enriched_query,
+                    top_k=50,
+                    top_n=3,
+                    rerank=True,
+                ),
+                RetrieveResponse,
+                timeout=timeout,
                 trace_id=trace_id,
-                query=enriched_query,
-                top_k=50,
-                top_n=3,
-                rerank=True,
-            ),
-            RetrieveResponse,
-            timeout=timeout,
-            trace_id=trace_id,
+            )
+            retrieval_duration_ms = (time.perf_counter() - retrieval_t0) * 1000.0
+            logger.info(
+                "latency_retrieval_service",
+                extra={"trace_id": trace_id, "duration_ms": retrieval_duration_ms},
+            )
+            if retrieval_data is not None:
+                await _cache_set_json(
+                    trace_id,
+                    cache_key,
+                    {"v": 1, "retrieval": retrieval_data.model_dump()},
+                    ttl_sec=_retrieval_cache_ttl_sec(),
+                )
+            return retrieval_data
+
+        async def _run_scoring() -> ScoreResponse | None:
+            nonlocal scoring_duration_ms
+            scoring_t0 = time.perf_counter()
+            score_data, _, _ = await post_typed(
+                client,
+                _scoring_url(),
+                ScoreRequest(
+                    trace_id=trace_id,
+                    entities=entities,
+                    structured_features={},
+                ),
+                ScoreResponse,
+                timeout=timeout,
+                trace_id=trace_id,
+            )
+            scoring_duration_ms = (time.perf_counter() - scoring_t0) * 1000.0
+            logger.info(
+                "latency_scoring_service",
+                extra={"trace_id": trace_id, "duration_ms": scoring_duration_ms},
+            )
+            return score_data
+
+        # Parallelize retrieval + scoring (independent once entities exist).
+        retrieval_result, scoring_result = await asyncio.gather(
+            _run_retrieval(),
+            _run_scoring(),
+            return_exceptions=False,
         )
-        num_passages = len(retrieval_data.passages) if retrieval_data else 0
+
+        num_passages = len(retrieval_result.passages) if retrieval_result else 0
         logger.info(
             "retrieval",
             extra={
@@ -379,7 +580,7 @@ async def ask(request: AskRequest) -> AskResponse:
                 "passages_returned": num_passages,
             },
         )
-        if retrieval_data is not None and retrieval_data.passages:
+        if retrieval_result is not None and retrieval_result.passages:
             sources = [
                 SourceItem(
                     source_id=p.source_id,
@@ -387,27 +588,14 @@ async def ask(request: AskRequest) -> AskResponse:
                     score=p.score,
                     metadata=p.metadata,
                 )
-                for p in retrieval_data.passages
+                for p in retrieval_result.passages
             ]
 
-        # 4) scoring-service /v1/score (input: entities from step 2)
-        data, _, _ = await post_typed(
-            client,
-            _scoring_url(),
-            ScoreRequest(
-                trace_id=trace_id,
-                entities=entities,
-                structured_features={},
-            ),
-            ScoreResponse,
-            timeout=timeout,
-            trace_id=trace_id,
-        )
-        if data is not None:
+        if scoring_result is not None:
             risk = RiskBlock(
-                score=data.score,
-                label=data.label,
-                explanation=data.explanation,
+                score=scoring_result.score,
+                label=scoring_result.label,
+                explanation=scoring_result.explanation,
             )
 
     # Relevance gate: refuse before LLM when retrieval is empty or scores/snippets are weak.
@@ -424,42 +612,86 @@ async def ask(request: AskRequest) -> AskResponse:
         )
         answer = "Insufficient data"
     else:
-        # Preferred path: synthesize answer via llm-service using retrieved context.
-        try:
-            llm_client = LLMClient()
-            prompt = _build_llm_prompt(
-                question=request.question,
-                entities=entities,
-                sources=sources,
-                risk=risk,
-                trace_id=trace_id,
-            )
-            llm_resp = await llm_client.generate(
-                trace_id=trace_id,
-                prompt=prompt,
-                max_tokens=512,
-                temperature=0.2,
-            )
-            await llm_client.aclose()
-
-            answer = llm_resp.text
+        top_source_ids = [s.source_id for s in sources]
+        model_name = os.getenv("LLM_MODEL_NAME", "unknown")
+        ans_key = _answer_cache_key(
+            question=request.question,
+            note_hash=_note_text_hash(request.note_text),
+            top_source_ids=top_source_ids,
+            model_name=model_name,
+        )
+        cached_ans = await _cache_get_json(trace_id, ans_key)
+        if cached_ans is not None and cached_ans.get("v") == 1 and isinstance(cached_ans.get("answer"), str):
+            answer_cache_hit = True
             logger.info(
-                "llm_answer_success",
-                extra={
-                    "trace_id": trace_id,
-                    "prompt_length": len(prompt),
-                },
+                "answer_cache_hit",
+                extra={"trace_id": trace_id, "key": ans_key},
             )
-        except (httpx.HTTPError, Exception) as exc:
-            # On any LLM failure, fall back to deterministic template-based synthesis.
-            logger.warning(
-                "llm_answer_fallback",
-                extra={
-                    "trace_id": trace_id,
-                    "error": str(exc),
-                },
+            answer = cached_ans["answer"]
+        else:
+            logger.info(
+                "answer_cache_miss",
+                extra={"trace_id": trace_id, "key": ans_key},
             )
-            answer = _synthesize_answer(request.question, sources, risk)
+        # Preferred path: synthesize answer via llm-service using retrieved context.
+        if not answer_cache_hit:
+            try:
+                llm_client = LLMClient()
+                prompt = _build_llm_prompt(
+                    question=request.question,
+                    entities=entities,
+                    sources=sources,
+                    risk=risk,
+                    trace_id=trace_id,
+                )
+                llm_t0 = time.perf_counter()
+                llm_resp = await llm_client.generate(
+                    trace_id=trace_id,
+                    prompt=prompt,
+                    max_tokens=512,
+                    temperature=0.2,
+                )
+                llm_duration_ms = (time.perf_counter() - llm_t0) * 1000.0
+                await llm_client.aclose()
+
+                answer = llm_resp.text
+                logger.info(
+                    "latency_llm_service",
+                    extra={"trace_id": trace_id, "duration_ms": llm_duration_ms},
+                )
+                logger.info(
+                    "llm_answer_success",
+                    extra={
+                        "trace_id": trace_id,
+                        "prompt_length": len(prompt),
+                    },
+                )
+                await _cache_set_json(
+                    trace_id,
+                    ans_key,
+                    {"v": 1, "answer": answer},
+                    ttl_sec=_answer_cache_ttl_sec(),
+                )
+            except (httpx.HTTPError, Exception) as exc:
+                # On any LLM failure, fall back to deterministic template-based synthesis.
+                logger.warning(
+                    "llm_answer_fallback",
+                    extra={
+                        "trace_id": trace_id,
+                        "error": str(exc),
+                    },
+                )
+                fallback_used = True
+                fb_t0 = time.perf_counter()
+                answer = _synthesize_answer(request.question, sources, risk)
+                fallback_synthesis_duration_ms = (time.perf_counter() - fb_t0) * 1000.0
+                logger.info(
+                    "latency_fallback_synthesis",
+                    extra={
+                        "trace_id": trace_id,
+                        "duration_ms": fallback_synthesis_duration_ms,
+                    },
+                )
 
     # Citations: unique source_ids with optional titles extracted from metadata or SourceItem
     citations: List[CitationItem] = []
@@ -482,6 +714,25 @@ async def ask(request: AskRequest) -> AskResponse:
                 url=url,
             )
         )
+
+    total_duration_ms = (time.perf_counter() - t_request_start) * 1000.0
+    logger.info(
+        "ask_latency_summary",
+        extra={
+            "trace_id": trace_id,
+            "total_duration_ms": total_duration_ms,
+            "pii_service_duration_ms": pii_duration_ms,
+            "ner_service_duration_ms": ner_duration_ms,
+            "retrieval_service_duration_ms": retrieval_duration_ms,
+            "scoring_service_duration_ms": scoring_duration_ms,
+            "llm_service_duration_ms": llm_duration_ms,
+            "fallback_synthesis_duration_ms": fallback_synthesis_duration_ms,
+            "fallback_used": fallback_used,
+            "retrieval_accepted": accept_retrieval,
+            "retrieval_cache_hit": retrieval_cache_hit,
+            "answer_cache_hit": answer_cache_hit,
+        },
+    )
 
     return AskResponse(
         trace_id=trace_id,

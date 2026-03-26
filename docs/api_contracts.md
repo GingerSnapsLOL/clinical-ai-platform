@@ -210,6 +210,11 @@ The ingest API is defined in `services/retrieval-service/app/main.py` using loca
 The LLM service defines request/response models in `services/llm-service/app/main.py` (not via `schemas_v1.py`).  
 The orchestrator calls this API via `services.shared.llm_client.LLMClient` (env `LLM_BASE_URL`, e.g. `http://llm-service:8060` in Docker).
 
+Backend implementation is selected by env var `LLM_BACKEND`:
+
+- `transformers` (default): active backend today.
+- `vllm`: active backend option for future migration/benchmarking.
+
 ### `POST /v1/generate`
 
 **Request JSON** (`GenerateRequest`):
@@ -218,8 +223,8 @@ The orchestrator calls this API via `services.shared.llm_client.LLMClient` (env 
 |-------|------|----------|-------------|
 | `trace_id` | `string` | yes | Same UUID as the rest of the pipeline; echoed in the response and used for logs. |
 | `prompt` | `string` | yes | Single text bundle from the orchestrator (`_build_llm_prompt` in `services/orchestrator/app/main.py`: question, entities, top evidence passages, risk block, instructions). |
-| `max_tokens` | `int` | no | Maximum **new** tokens to generate (default `512`). |
-| `temperature` | `float` | no | Sampling temperature (default `0.2`). |
+| `max_tokens` | `int` | no | Maximum **new** tokens to generate (default `192`, service-capped to `<=256`). |
+| `temperature` | `float` | no | Sampling temperature (default `0.0` for deterministic output). |
 
 **Response JSON** (`GenerateResponse`):
 
@@ -228,7 +233,13 @@ The orchestrator calls this API via `services.shared.llm_client.LLMClient` (env 
 | `status` | `Status` | `"ok"` on success. |
 | `trace_id` | `string` | **Must match** request `trace_id` (server does not mint a new id). |
 | `text` | `string` | Decoded completion (new tokens only; not the full prompt). |
-| `usage` | `object` | `prompt_tokens`, `completion_tokens`, `total_tokens` (counts derived from tensors in the handler). |
+| `usage` | `object` | `prompt_tokens`, `completion_tokens`, `total_tokens` (normalized backend usage fields). |
+
+Usage normalization notes across backends:
+
+- `transformers`: prompt/completion token counts are **exact** from tensor/token id lengths.
+- `vllm`: token counts are **exact** when token ids are available from vLLM outputs; if unavailable, counts are **estimated** from text length heuristics.
+- API contract is unchanged: clients always receive the same three integer fields in `usage`.
 
 ### `trace_id` propagation (orchestrator → llm-service)
 
@@ -242,6 +253,30 @@ The orchestrator calls this API via `services.shared.llm_client.LLMClient` (env 
 - **Not in repository text**: neither `services/orchestrator/app/main.py` (`_build_llm_prompt`) nor `services/llm-service/app/main.py` contains the literal phrase “100 words”. The orchestrator asks for a **concise, clinician-facing** answer; `llm-service` does not prepend fixed words to the completion.
 - **Source of the artifact**: wording like “In 100 words.” is produced by the **model-derived continuation** (`model.generate` → `tokenizer.decode` on **new** tokens only). It often appears when an **instruct/chat** model sees a long, instruction-heavy block as **raw text** instead of the tokenizer’s **chat template** (Special tokens / roles trained into Qwen).
 - **Mitigation in `llm-service`**: when the tokenizer provides `apply_chat_template`, the orchestrator prompt is wrapped as a **user** message and formatted with `add_generation_prompt=True` before encoding (see `app/main.py`). That aligns the input with how Qwen2.5-Instruct was trained and reduces meta-preambles.
+
+### Recommended low-latency defaults (clinical, deterministic)
+
+These are the current recommended defaults in `llm-service` for concise answers:
+
+- `max_tokens`: **192** (practical range: **128-256**; service cap at 256)
+- `temperature`: **0.0**
+- `do_sample`: **false**
+- `top_p`: **1.0**
+- `repetition_penalty`: **1.05**
+
+Rationale: prioritize stable, short, grounded completions over creativity, with lower decode latency.
+
+### Backend abstraction for future vLLM migration
+
+`llm-service` now centralizes startup loading through a backend loader and a generation interface:
+
+- `load_backend(model_name, backend_name)` – picks and initializes backend once at startup.
+- `generate_text(prompt, cfg)` – backend call used by `/v1/generate`.
+
+vLLM-related config hooks already exist (for future implementation):
+
+- `LLM_BACKEND_VLLM_ENGINE`
+- `LLM_BACKEND_VLLM_TENSOR_PARALLEL_SIZE`
 
 ---
 
