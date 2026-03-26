@@ -743,6 +743,18 @@ async def ask(request: AskRequest) -> AskResponse:
         risk=risk,
         citations=citations,
         warnings=warnings,
+        total_request_time_ms=total_duration_ms,
+        retrieval_time_ms=retrieval_duration_ms,
+        llm_time_ms=llm_duration_ms,
+        timings={
+            "total_request_time_ms": total_duration_ms,
+            "pii_service_duration_ms": pii_duration_ms,
+            "ner_service_duration_ms": ner_duration_ms,
+            "retrieval_service_duration_ms": retrieval_duration_ms,
+            "scoring_service_duration_ms": scoring_duration_ms,
+            "llm_service_duration_ms": llm_duration_ms,
+            "fallback_synthesis_duration_ms": fallback_synthesis_duration_ms,
+        },
     )
 
 

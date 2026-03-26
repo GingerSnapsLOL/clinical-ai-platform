@@ -6,6 +6,7 @@ COPY package.json package-lock.json ./
 RUN npm install
 
 COPY . .
+RUN mkdir -p public
 RUN npm run build
 
 FROM node:20-alpine AS runner

@@ -20,7 +20,7 @@ export type RiskAssessment = {
 
 export type AskRequest = {
   mode: "strict" | "hybrid";
-  note_text: string;
+  note_text?: string;
   question: string;
 };
 

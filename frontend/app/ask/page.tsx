@@ -42,8 +42,8 @@ function getGroundingQuality(result: AskResponse | null): {
   label: "strong grounding" | "weak grounding" | "insufficient data";
   toneClass: string;
   note: string;
-} | null {
-  if (!result) return null;
+} | undefined {
+  if (!result) return undefined;
 
   const warnings = result.warnings ?? [];
   const scores = (result.sources ?? [])
@@ -163,6 +163,15 @@ export default function AskPage() {
   const retrievalDiagnostics = result?.retrieval_diagnostics;
   const plannerDecisions = result?.planner_decisions ?? result?.planner;
 
+  const hasTimings =
+    typeof totalRequestTime === "number" ||
+    typeof retrievalTime === "number" ||
+    typeof llmTime === "number";
+  const hasCompareTimings =
+    typeof compareTotalRequestTime === "number" ||
+    typeof compareRetrievalTime === "number" ||
+    typeof compareLlmTime === "number";
+
   return (
     <main className="mx-auto flex w-full max-w-[1280px] flex-col gap-8 px-4 py-8 lg:px-8 lg:py-10">
       <header className="space-y-3">
@@ -218,59 +227,72 @@ export default function AskPage() {
           <EntitiesPanel entities={result?.entities ?? []} />
           <RiskPanel risk={result?.risk} />
           <DashboardCard title="Diagnostics">
-            <div className="grid gap-2 sm:grid-cols-3">
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Total request
-                </p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {formatMs(totalRequestTime)}
-                </p>
+            {!hasTimings ? (
+              <p className="text-sm text-slate-600">
+                Latency timings are not provided by the backend yet.
+              </p>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Total request
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {formatMs(totalRequestTime)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Retrieval
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {formatMs(retrievalTime)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    LLM
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {formatMs(llmTime)}
+                  </p>
+                </div>
               </div>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Retrieval
-                </p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {formatMs(retrievalTime)}
-                </p>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  LLM
-                </p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {formatMs(llmTime)}
-                </p>
-              </div>
-            </div>
+            )}
+
             {compareMode && (
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
                   <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
                     Latency differences (B - A)
                   </p>
-                  <p className="mt-1">
-                    Total:{" "}
-                    {typeof compareTotalRequestTime === "number" &&
-                    typeof totalRequestTime === "number"
-                      ? `${(compareTotalRequestTime - totalRequestTime).toFixed(0)} ms`
-                      : "N/A"}
-                  </p>
-                  <p>
-                    Retrieval:{" "}
-                    {typeof compareRetrievalTime === "number" &&
-                    typeof retrievalTime === "number"
-                      ? `${(compareRetrievalTime - retrievalTime).toFixed(0)} ms`
-                      : "N/A"}
-                  </p>
-                  <p>
-                    LLM:{" "}
-                    {typeof compareLlmTime === "number" &&
-                    typeof llmTime === "number"
-                      ? `${(compareLlmTime - llmTime).toFixed(0)} ms`
-                      : "N/A"}
-                  </p>
+                  {!hasCompareTimings ? (
+                    <p className="mt-1">No timing metrics returned for compare.</p>
+                  ) : (
+                    <>
+                      <p className="mt-1">
+                        Total:{" "}
+                        {typeof compareTotalRequestTime === "number" &&
+                        typeof totalRequestTime === "number"
+                          ? `${(compareTotalRequestTime - totalRequestTime).toFixed(0)} ms`
+                          : "N/A"}
+                      </p>
+                      <p>
+                        Retrieval:{" "}
+                        {typeof compareRetrievalTime === "number" &&
+                        typeof retrievalTime === "number"
+                          ? `${(compareRetrievalTime - retrievalTime).toFixed(0)} ms`
+                          : "N/A"}
+                      </p>
+                      <p>
+                        LLM:{" "}
+                        {typeof compareLlmTime === "number" &&
+                        typeof llmTime === "number"
+                          ? `${(compareLlmTime - llmTime).toFixed(0)} ms`
+                          : "N/A"}
+                      </p>
+                    </>
+                  )}
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
                   <p className="text-xs font-medium uppercase tracking-wide text-slate-500">

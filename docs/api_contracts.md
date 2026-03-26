@@ -58,6 +58,11 @@ All services expose `GET /health` returning `HealthResponse`.
   - `risk: RiskBlock | None` – risk score + explanation (currently stubbed).
   - `warnings: list[str]` – non-fatal pipeline warnings.
   - `error: ErrorInfo | None` – populated when `status == "error"`.
+  - Latency timings (milliseconds, floats; populated by orchestrator):
+    - `total_request_time_ms?: float`
+    - `retrieval_time_ms?: float`
+    - `llm_time_ms?: float`
+    - `timings?: dict[str, float]` (expanded service breakdown)
 
 ### Supporting types
 
