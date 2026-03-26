@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: setup up init down build rebuild lock logs ps health reset test ingest base-image all ci
+.PHONY: setup up init down build rebuild lock logs ps health reset test ingest base-image all ci frontend-install frontend-dev frontend
 
 SERVICES := gateway-api orchestrator pii-service ner-service retrieval-service scoring-service llm-service
 
@@ -68,4 +68,12 @@ all: lock base-image build
 
 # CI path (includes local uv tests)
 ci: all test
+
+frontend-install:
+	cd frontend && npm install
+
+frontend-dev:
+	cd frontend && npm run dev
+
+frontend: frontend-install frontend-dev
 

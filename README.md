@@ -12,40 +12,51 @@ For architecture and long-term plans, see:
 
 ---
 
-## What works today
+## Services and current behavior
 
-- **Health checks**
-  - Each service exposes `/health` returning a typed `HealthResponse`.
-  - Docker Compose wires all services plus infra containers (Qdrant, Postgres, Redis, LLM).
+### Service map
 
-- **Core APIs**
-  - **Gateway `/v1/ask`**
-    - Validates public input (`note_text`, `question`, optional `mode`, optional `trace_id`).
-    - Generates a UUID trace ID when not provided and forwards to orchestrator.
-  - **Orchestrator `/v1/ask`**
-    - Calls:
-      - `pii-service` `/v1/redact` on the original note text.
-      - `ner-service` `/v1/extract` on the redacted text.
-      - `retrieval-service` `/v1/retrieve` with an enriched query (question + entities + lightweight note summary).
-      - `scoring-service` `/v1/score` using extracted entities (currently stub scoring).
-      - `llm-service` `/v1/generate` with a grounded prompt built from entities, passages, and risk.
-    - On any LLM error, falls back to a deterministic, template-based answer that still uses retrieved passages and the risk block.
-    - Returns `AskResponse` including `answer`, `entities`, `sources`, `citations`, `risk`, `trace_id`, and `pii_redacted`.
-  - **PII `/v1/redact`**
-    - Detects and anonymizes PII, returning `redacted_text` and structured spans with confidence scores.
-  - **NER `/v1/extract`**
-    - Runs SciSpaCy NER and returns normalized `EntityItem` objects (type, text, span).
-  - **Retrieval `/v1/retrieve` and `/v1/ingest`**
-    - Ingest: chunks documents (≈300–500 tokens), embeds with `all-MiniLM-L6-v2`, and upserts into Qdrant.
-    - Retrieve: embeds query, searches Qdrant, deduplicates passages, optionally reranks with `ms-marco-MiniLM-L-6-v2`, and returns up to 3 top passages when rerank is enabled.
-  - **Scoring `/v1/score`**
-    - Returns a fixed high‑risk score and a small list of feature contributions; intended as a stub for now.
-  - **LLM `/v1/generate`**
-    - Wraps a locally hosted Qwen model and returns generated text plus simple token usage metrics.
+- **Gateway API (`:8000`)**
+  - Public entrypoint for `POST /v1/ask`.
+  - Validates incoming payload (`mode`, `note_text`, `question`, optional `trace_id`).
+  - Ensures a `trace_id` is present and forwards request to orchestrator.
 
-- **Traceability and shared contracts**
-  - All services use a shared `trace_id` for structured logging.
-  - Request/response schemas are centralized in `services/shared/schemas_v1.py`, with tests to keep them in sync.
+- **Orchestrator (`:8010`)**
+  - Coordinates the full ask pipeline.
+  - Calls PII redaction, NER extraction, retrieval, risk scoring, and answer generation services.
+  - Aggregates downstream outputs into one response for gateway/frontends.
+
+- **PII Service (`:8020`)**
+  - Endpoint: `POST /v1/redact`.
+  - Detects sensitive fields and returns redacted text plus span-level details.
+
+- **NER Service (`:8030`)**
+  - Endpoint: `POST /v1/extract`.
+  - Extracts biomedical/clinical entities from redacted text.
+
+- **Retrieval Service (`:8040`)**
+  - Endpoints: `POST /v1/ingest`, `POST /v1/retrieve`.
+  - Ingests chunked clinical corpus into Qdrant embeddings.
+  - Retrieves and reranks relevant passages for grounding.
+
+- **Scoring Service (`:8050`)**
+  - Endpoint: `POST /v1/score`.
+  - Produces risk-oriented scoring output and feature contributions.
+  - Current implementation is intentionally simple/stub-like.
+
+- **LLM Service (`:8060`)**
+  - Endpoint: `POST /v1/generate`.
+  - Generates grounded answer text using retrieved evidence/context.
+
+### End-to-end ask pipeline
+
+`gateway-api` -> `orchestrator` -> `pii-service` -> `ner-service` -> `retrieval-service` -> `scoring-service` -> `llm-service` -> aggregated response
+
+### Contracts and traceability
+
+- Shared request/response schemas are centralized in `services/shared/schemas_v1.py`.
+- Every service propagates `trace_id` for cross-service observability and debugging.
+- `GET /health` is implemented across services for readiness and smoke checks.
 
 ---
 
@@ -174,6 +185,101 @@ This ingests `examples/clinical_docs*.json` into Qdrant via `retrieval-service` 
 
 ---
 
+## Frontend Console (Next.js)
+
+The repository includes a standalone frontend app in `frontend/` that acts as an internal clinical AI testing console for `/v1/ask`.
+
+### Frontend stack
+
+- Next.js App Router
+- TypeScript
+- ESLint
+- Tailwind CSS
+
+### Frontend structure
+
+- `frontend/app/page.tsx` - landing page
+- `frontend/app/ask/page.tsx` - main testing UI
+- `frontend/app/api/ask/route.ts` - proxy route to backend gateway `/v1/ask`
+- `frontend/components/*` - reusable UI panels and card components
+- `frontend/lib/api.ts` - typed API client (`/api/ask`)
+- `frontend/lib/types.ts` - typed request/response contracts used by UI
+
+### Frontend request contract
+
+Ask form sends:
+
+- `mode` (`strict` or `hybrid`)
+- `note_text`
+- `question`
+
+### Frontend features
+
+- Portfolio-style dashboard layout with responsive two-column design
+- Sticky request input column on desktop
+- Demo prompt prefill buttons:
+  - Hypertension treatment
+  - Thiazide diuretics
+  - Calcium channel blockers
+  - Unknown query
+- Answer panel with loading and error handling
+- Grounding quality indicator near answers:
+  - strong grounding (green)
+  - weak grounding (yellow)
+  - insufficient data (red)
+- Sources panel redesigned as evidence cards:
+  - title
+  - relevance badge
+  - metadata block
+  - snippet
+- Entities panel
+- Risk assessment panel with colored status badge and structured explanation list
+- Diagnostics panel:
+  - total request time
+  - retrieval time
+  - llm time
+- Compare mode (toggleable):
+  - sends the same request twice
+  - displays Answer A and Answer B side-by-side
+  - shows latency differences and source differences
+- Collapsible Trace/Debug panel:
+  - `trace_id`
+  - warnings
+  - retrieval diagnostics
+  - planner decisions (if available)
+
+### Frontend environment
+
+Create `frontend/.env.local`:
+
+```env
+BACKEND_BASE_URL=http://localhost:8000
+```
+
+### Run frontend locally
+
+From repo root:
+
+```bash
+make frontend-install
+make frontend-dev
+```
+
+Or directly:
+
+```bash
+cd frontend
+npm install
+node ./node_modules/next/dist/bin/next dev
+```
+
+Open:
+
+- `http://localhost:3000`
+- `http://localhost:3000/ask`
+
+---
+
 ## Repository structure (current)
 
 ```text
@@ -245,10 +351,9 @@ PYTHONPATH=.:services/orchestrator uv run pytest services/orchestrator/tests -v
 
 ## Modes (runtime behavior)
 
-- **Strict (implemented)**  
-  - No internet calls; only local corpus (Qdrant + examples).  
-  - This is the **effective behavior for all current requests**, regardless of the `mode` field.
+- API accepts:
+  - `strict`
+  - `hybrid`
 
-- **Hybrid (not implemented yet)**  
-  - Planned: web search/page fetch with strict de‑identification and allowlisted domains.  
-  - As of now, setting `mode="hybrid"` has no effect; all requests are processed in strict mode.
+- In current local setup, retrieval is grounded on local indexed corpus (Qdrant + ingested documents).
+- If you introduce external retrieval or web augmentation for hybrid flows, document deployment-specific behavior in `docs/architecture.md`.
