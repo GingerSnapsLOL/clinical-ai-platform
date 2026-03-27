@@ -180,16 +180,19 @@ async def retrieve(request: RetrieveRequest) -> RetrieveResponse:
     passages: List[PassageItem] = []
     for h in hits:
         payload = h.payload or {}
-        source_id = payload.get("doc_id", str(h.id))
+        source_id = payload.get("doc_id") or payload.get("id") or str(h.id)
         text = payload.get("text", "")
 
         # Always expose key metadata fields
         title = payload.get("title") or f"Document {source_id}"
         source = payload.get("source") or "unknown"
 
-        extra_metadata = {k: v for k, v in payload.items() if k not in ("text", "doc_id")}
+        extra_metadata = {
+            k: v for k, v in payload.items() if k not in ("text", "doc_id", "id")
+        }
         metadata = {
             "doc_id": source_id,
+            "id": payload.get("id") or source_id,
             "title": title,
             "source": source,
             **extra_metadata,

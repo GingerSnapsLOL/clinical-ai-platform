@@ -19,6 +19,7 @@ __pycache__/
 .nox/
 .cache/
 
+
 # Virtual environments
 venv/
 env/
@@ -59,3 +60,23 @@ Thumbs.db
 
 # Docker
 *.tar
+
+
+# data
+data/
+*.jsonl
+*.zip
+*.gz
+*.bz2
+*.xz
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.lzma
+*.tar.lz
+*.tar.lzma
+*.txt
+*.csv
+*.tsv
+*.xml
