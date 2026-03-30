@@ -1,15 +1,10 @@
-import os
+from fastapi import FastAPI, HTTPException
 
-from fastapi import FastAPI
-
-from services.shared.logging_util import set_trace_id, structured_log_middleware
-from services.shared.schemas_v1 import (
-    FeatureContribution,
-    HealthResponse,
-    ScoreRequest,
-    ScoreResponse,
-)
-
+from app import engine
+from app.config import settings
+from app.targets import valid_target_ids
+from services.shared.logging_util import structured_log_middleware
+from services.shared.schemas_v1 import HealthResponse, ScoreRequest, ScoreResponse
 
 app = FastAPI(title="Scoring Service", version="0.1.0")
 app.add_middleware(structured_log_middleware("scoring-service"))
@@ -22,29 +17,23 @@ async def health() -> HealthResponse:
 
 @app.post("/v1/score", response_model=ScoreResponse)
 async def score(request: ScoreRequest) -> ScoreResponse:
-    """
-    Stub risk scoring: returns score 0.72 with feature explanation.
-    Accepts ScoreRequest, returns ScoreResponse; preserves trace_id.
-    """
-    set_trace_id(request.trace_id)
-
-    explanation = [
-        FeatureContribution(feature="bp_high", contribution=0.18),
-        FeatureContribution(feature="age_bucket_60_70", contribution=0.12),
-        FeatureContribution(feature="disease_hypertension", contribution=0.08),
-    ]
-
-    return ScoreResponse(
-        trace_id=request.trace_id,
-        score=0.72,
-        label="high",
-        explanation=explanation,
-    )
+    """Multi-target risk scoring: shared extraction, per-target models and thresholds."""
+    if request.targets:
+        unknown = [t for t in request.targets if t not in valid_target_ids()]
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "unknown_target", "targets": unknown},
+            )
+    return engine.compute_score(request)
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("SCORING_SERVICE_PORT", "8050"))
-    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=True)
-
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=settings.scoring_service_port,
+        reload=True,
+    )

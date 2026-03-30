@@ -13,6 +13,15 @@ from services.shared.http_client import create_client, get_timeout, post_typed
 from services.shared.logging_util import get_logger, set_trace_id, structured_log_middleware
 from services.shared.llm_client import LLMClient
 
+from agent_nodes import (
+    answer_verifier_node,
+    draft_answer_node,
+    evidence_selector_node,
+    finalize_answer_node,
+)
+from agent_runtime import compile_linear_chain
+from agent_state import AgentState
+
 try:
     from redis.asyncio import Redis  # type: ignore
 except Exception:  # pragma: no cover
@@ -64,6 +73,12 @@ def _answer_cache_ttl_sec() -> int:
     return int(os.getenv("ORCHESTRATOR_ANSWER_CACHE_TTL_SEC", "900"))
 
 
+def _agent_mode_enabled() -> bool:
+    """When True, use multi-step agent runtime (selector → draft → verify → finalize) instead of single-shot LLM."""
+    raw = os.getenv("ORCHESTRATOR_AGENT_MODE", "false").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
 def _normalize_text_key(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
@@ -82,10 +97,20 @@ def _retrieval_cache_key(query: str, top_k: int, top_n: int, rerank: bool) -> st
     return f"orchestrator:retrieval:{_sha256_hex(payload)}"
 
 
-def _answer_cache_key(question: str, note_hash: str, top_source_ids: list[str], model_name: str) -> str:
+def _answer_cache_key(
+    question: str,
+    note_hash: str,
+    top_source_ids: list[str],
+    model_name: str,
+    *,
+    use_agent: bool = False,
+) -> str:
     qn = _normalize_text_key(question)
     ids = ",".join(top_source_ids)
-    payload = f"v1|q={qn}|note={note_hash}|ids={ids}|model={model_name}"
+    if use_agent:
+        payload = f"v1|q={qn}|note={note_hash}|ids={ids}|model={model_name}|agent=1"
+    else:
+        payload = f"v1|q={qn}|note={note_hash}|ids={ids}|model={model_name}"
     return f"orchestrator:answer:{_sha256_hex(payload)}"
 
 
@@ -415,6 +440,11 @@ async def ask(request: AskRequest) -> AskResponse:
     """
     trace_id = request.trace_id
     set_trace_id(trace_id)
+    agent_mode_flag = _agent_mode_enabled()
+    logger.info(
+        "agent_mode_enabled",
+        extra={"trace_id": trace_id, "enabled": agent_mode_flag},
+    )
     t_request_start = time.perf_counter()
     timeout = get_timeout()
     warnings: List[str] = []
@@ -426,6 +456,7 @@ async def ask(request: AskRequest) -> AskResponse:
     llm_duration_ms: float = 0.0
     fallback_synthesis_duration_ms: float = 0.0
     fallback_used: bool = False
+    agent_node_timings: dict[str, float] = {}
     accept_retrieval: bool = False
     retrieval_cache_hit: bool = False
     answer_cache_hit: bool = False
@@ -614,11 +645,13 @@ async def ask(request: AskRequest) -> AskResponse:
     else:
         top_source_ids = [s.source_id for s in sources]
         model_name = os.getenv("LLM_MODEL_NAME", "unknown")
+        use_agent = agent_mode_flag
         ans_key = _answer_cache_key(
             question=request.question,
             note_hash=_note_text_hash(request.note_text),
             top_source_ids=top_source_ids,
             model_name=model_name,
+            use_agent=use_agent,
         )
         cached_ans = await _cache_get_json(trace_id, ans_key)
         if cached_ans is not None and cached_ans.get("v") == 1 and isinstance(cached_ans.get("answer"), str):
@@ -636,36 +669,98 @@ async def ask(request: AskRequest) -> AskResponse:
         # Preferred path: synthesize answer via llm-service using retrieved context.
         if not answer_cache_hit:
             try:
-                llm_client = LLMClient()
-                prompt = _build_llm_prompt(
-                    question=request.question,
-                    entities=entities,
-                    sources=sources,
-                    risk=risk,
-                    trace_id=trace_id,
-                )
-                llm_t0 = time.perf_counter()
-                llm_resp = await llm_client.generate(
-                    trace_id=trace_id,
-                    prompt=prompt,
-                    max_tokens=512,
-                    temperature=0.2,
-                )
-                llm_duration_ms = (time.perf_counter() - llm_t0) * 1000.0
-                await llm_client.aclose()
+                if use_agent:
+                    logger.info(
+                        "agent_runtime_started",
+                        extra={"trace_id": trace_id},
+                    )
+                    initial_state = AgentState(
+                        trace_id=trace_id,
+                        question=request.question,
+                        entities=entities,
+                        sources=sources,
+                        risk=risk,
+                        warnings=list(warnings),
+                    )
+                    agent_runtime = compile_linear_chain(
+                        evidence_selector_node,
+                        draft_answer_node,
+                        answer_verifier_node,
+                        finalize_answer_node,
+                    )
+                    final_state, agent_node_timings = await agent_runtime.run(initial_state)
+                    llm_duration_ms = agent_node_timings.get("agent_total_duration_ms", 0.0)
+                    answer = (final_state.final_answer or "Insufficient data").strip()
+                    for w in final_state.warnings:
+                        if w not in warnings:
+                            warnings.append(w)
+                    logger.info(
+                        "agent_runtime_finished",
+                        extra={
+                            "trace_id": trace_id,
+                            "duration_ms": llm_duration_ms,
+                            "answer_len": len(answer),
+                            "agent_selector_duration_ms": round(
+                                agent_node_timings.get("agent_selector_duration_ms", 0.0), 3
+                            ),
+                            "agent_draft_duration_ms": round(
+                                agent_node_timings.get("agent_draft_duration_ms", 0.0), 3
+                            ),
+                            "agent_verifier_duration_ms": round(
+                                agent_node_timings.get("agent_verifier_duration_ms", 0.0), 3
+                            ),
+                            "agent_finalize_duration_ms": round(
+                                agent_node_timings.get("agent_finalize_duration_ms", 0.0), 3
+                            ),
+                        },
+                    )
+                    logger.info(
+                        "latency_llm_service",
+                        extra={
+                            "trace_id": trace_id,
+                            "duration_ms": llm_duration_ms,
+                            "agent_mode": True,
+                        },
+                    )
+                    logger.info(
+                        "llm_answer_success",
+                        extra={
+                            "trace_id": trace_id,
+                            "agent_mode": True,
+                        },
+                    )
+                else:
+                    llm_client = LLMClient()
+                    prompt = _build_llm_prompt(
+                        question=request.question,
+                        entities=entities,
+                        sources=sources,
+                        risk=risk,
+                        trace_id=trace_id,
+                    )
+                    llm_t0 = time.perf_counter()
+                    llm_resp = await llm_client.generate(
+                        trace_id=trace_id,
+                        prompt=prompt,
+                        max_tokens=512,
+                        temperature=0.2,
+                    )
+                    llm_duration_ms = (time.perf_counter() - llm_t0) * 1000.0
+                    await llm_client.aclose()
 
-                answer = llm_resp.text
-                logger.info(
-                    "latency_llm_service",
-                    extra={"trace_id": trace_id, "duration_ms": llm_duration_ms},
-                )
-                logger.info(
-                    "llm_answer_success",
-                    extra={
-                        "trace_id": trace_id,
-                        "prompt_length": len(prompt),
-                    },
-                )
+                    answer = llm_resp.text
+                    logger.info(
+                        "latency_llm_service",
+                        extra={"trace_id": trace_id, "duration_ms": llm_duration_ms},
+                    )
+                    logger.info(
+                        "llm_answer_success",
+                        extra={
+                            "trace_id": trace_id,
+                            "prompt_length": len(prompt),
+                        },
+                    )
+
                 await _cache_set_json(
                     trace_id,
                     ans_key,
@@ -674,11 +769,17 @@ async def ask(request: AskRequest) -> AskResponse:
                 )
             except (httpx.HTTPError, Exception) as exc:
                 # On any LLM failure, fall back to deterministic template-based synthesis.
+                if use_agent:
+                    logger.warning(
+                        "agent_runtime_fallback",
+                        extra={"trace_id": trace_id, "error": str(exc)},
+                    )
                 logger.warning(
                     "llm_answer_fallback",
                     extra={
                         "trace_id": trace_id,
                         "error": str(exc),
+                        "agent_mode": use_agent,
                     },
                 )
                 fallback_used = True
@@ -716,23 +817,51 @@ async def ask(request: AskRequest) -> AskResponse:
         )
 
     total_duration_ms = (time.perf_counter() - t_request_start) * 1000.0
-    logger.info(
-        "ask_latency_summary",
-        extra={
-            "trace_id": trace_id,
-            "total_duration_ms": total_duration_ms,
-            "pii_service_duration_ms": pii_duration_ms,
-            "ner_service_duration_ms": ner_duration_ms,
-            "retrieval_service_duration_ms": retrieval_duration_ms,
-            "scoring_service_duration_ms": scoring_duration_ms,
-            "llm_service_duration_ms": llm_duration_ms,
-            "fallback_synthesis_duration_ms": fallback_synthesis_duration_ms,
-            "fallback_used": fallback_used,
-            "retrieval_accepted": accept_retrieval,
-            "retrieval_cache_hit": retrieval_cache_hit,
-            "answer_cache_hit": answer_cache_hit,
-        },
-    )
+    summary_extra: dict[str, Any] = {
+        "trace_id": trace_id,
+        "total_duration_ms": total_duration_ms,
+        "pii_service_duration_ms": pii_duration_ms,
+        "ner_service_duration_ms": ner_duration_ms,
+        "retrieval_service_duration_ms": retrieval_duration_ms,
+        "scoring_service_duration_ms": scoring_duration_ms,
+        "llm_service_duration_ms": llm_duration_ms,
+        "fallback_synthesis_duration_ms": fallback_synthesis_duration_ms,
+        "fallback_used": fallback_used,
+        "retrieval_accepted": accept_retrieval,
+        "retrieval_cache_hit": retrieval_cache_hit,
+        "answer_cache_hit": answer_cache_hit,
+        "agent_mode": agent_mode_flag,
+    }
+    if agent_node_timings:
+        summary_extra["agent_total_duration_ms"] = round(
+            agent_node_timings.get("agent_total_duration_ms", 0.0), 3
+        )
+        summary_extra["agent_selector_duration_ms"] = round(
+            agent_node_timings.get("agent_selector_duration_ms", 0.0), 3
+        )
+        summary_extra["agent_draft_duration_ms"] = round(
+            agent_node_timings.get("agent_draft_duration_ms", 0.0), 3
+        )
+        summary_extra["agent_verifier_duration_ms"] = round(
+            agent_node_timings.get("agent_verifier_duration_ms", 0.0), 3
+        )
+        summary_extra["agent_finalize_duration_ms"] = round(
+            agent_node_timings.get("agent_finalize_duration_ms", 0.0), 3
+        )
+
+    logger.info("ask_latency_summary", extra=summary_extra)
+
+    timings_payload: dict[str, float] = {
+        "total_request_time_ms": total_duration_ms,
+        "pii_service_duration_ms": pii_duration_ms,
+        "ner_service_duration_ms": ner_duration_ms,
+        "retrieval_service_duration_ms": retrieval_duration_ms,
+        "scoring_service_duration_ms": scoring_duration_ms,
+        "llm_service_duration_ms": llm_duration_ms,
+        "fallback_synthesis_duration_ms": fallback_synthesis_duration_ms,
+    }
+    if agent_node_timings:
+        timings_payload.update(agent_node_timings)
 
     return AskResponse(
         trace_id=trace_id,
@@ -746,15 +875,7 @@ async def ask(request: AskRequest) -> AskResponse:
         total_request_time_ms=total_duration_ms,
         retrieval_time_ms=retrieval_duration_ms,
         llm_time_ms=llm_duration_ms,
-        timings={
-            "total_request_time_ms": total_duration_ms,
-            "pii_service_duration_ms": pii_duration_ms,
-            "ner_service_duration_ms": ner_duration_ms,
-            "retrieval_service_duration_ms": retrieval_duration_ms,
-            "scoring_service_duration_ms": scoring_duration_ms,
-            "llm_service_duration_ms": llm_duration_ms,
-            "fallback_synthesis_duration_ms": fallback_synthesis_duration_ms,
-        },
+        timings=timings_payload,
     )
 
 

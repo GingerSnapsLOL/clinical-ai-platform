@@ -28,6 +28,7 @@ from services.shared.schemas_v1 import (
     ScoreRequest,
     ScoreResponse,
     SourceItem,
+    TargetScoreResult,
 )
 
 
@@ -124,6 +125,16 @@ class TestScoreRequest:
         r = ScoreRequest(trace_id="t1", entities=[], structured_features={"x": 1})
         assert r.trace_id == "t1"
         assert r.structured_features["x"] == 1
+        assert r.targets is None
+
+    def test_explicit_targets(self):
+        r = ScoreRequest(
+            trace_id="t1",
+            entities=[],
+            structured_features={},
+            targets=["cardiovascular_risk"],
+        )
+        assert r.targets == ["cardiovascular_risk"]
 
 
 class TestScoreResponse:
@@ -134,6 +145,19 @@ class TestScoreResponse:
         assert r.score == 0.72
         assert r.label == "high"
         assert len(r.explanation) == 1
+        assert r.target_results is None
+
+
+class TestTargetScoreResult:
+    def test_stub(self):
+        t = TargetScoreResult(
+            target="stroke_risk",
+            ready=False,
+            detail="Model not trained",
+        )
+        assert t.target == "stroke_risk"
+        assert t.ready is False
+        assert t.score == 0.0
 
 
 class TestErrorInfo:

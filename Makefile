@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: setup up init down build rebuild lock logs ps health reset test ingest base-image all ci frontend-install frontend-dev frontend
+.PHONY: setup up init down build rebuild lock logs ps health reset test ingest all-ingest base-image all ci frontend-install frontend-dev frontend
 
 SERVICES := gateway-api orchestrator pii-service ner-service retrieval-service scoring-service llm-service
 
@@ -60,13 +60,26 @@ test:
 		(cd services/$$svc && uv sync && PYTHONPATH=$$(pwd)/../.. uv run pytest tests -v --tb=short); \
 	done
 
-ingest:
-	uv run python scripts/ingest_demo.py
+# Full retrieval index: download sources, parse to JSONL, merge datamix, embed into Qdrant.
+# Requires Qdrant reachable at http://localhost:6333 (e.g. docker compose up qdrant).
+# DailyMed/MedlinePlus downloads are large and slow; optional interim file: data/interim/synthetic.jsonl
+ingest: setup
+	set -euo pipefail; \
+	uv run python scripts/download_medlineplus.py; \
+	uv run python scripts/download_dailymed.py; \
+	uv run python scripts/parse_medlineplus.py; \
+	uv run python scripts/parse_dailymed.py; \
+	uv run python scripts/make_datamix.py; \
+	uv run python scripts/ingest_qdrant.py
 
 # Docker-first build path (no local tests)
 all: lock base-image build
 
-# CI path (includes local uv tests)
+# setup + lock + base-image + build + docker compose up -d, then full ingest (datamix → Qdrant).
+all-ingest: up
+	$(MAKE) ingest
+
+# CI path (includes local tests)
 ci: all test
 
 frontend-install:

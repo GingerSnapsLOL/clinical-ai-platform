@@ -136,15 +136,21 @@ For architecture and long-term plans, see:
   uv sync
   ```
 
-### 2. Ingest demo documents (once)
+### 2. Ingest retrieval corpus (once)
 
-With the stack running and `retrieval-service` healthy:
+Qdrant must be reachable at `http://localhost:6333` (included in `docker compose`).
+
+Build `data/processed/datamix.jsonl` from MedlinePlus/DailyMed (and optional `data/interim/synthetic.jsonl`), then embed into the `clinical_docs` collection:
 
 ```bash
-python scripts/ingest_demo.py
+make ingest
 ```
 
-This ingests `examples/clinical_docs*.json` into Qdrant via `retrieval-service` `/v1/ingest`.
+Or, if `datamix.jsonl` is already built:
+
+```bash
+uv run python scripts/ingest_qdrant.py
+```
 
 ### 3. Smoke-test the APIs
 
@@ -180,7 +186,7 @@ This ingests `examples/clinical_docs*.json` into Qdrant via `retrieval-service` 
 
 ### 4. Helpful scripts
 
-- `scripts/ingest_demo.py` – ingest demo corpus into Qdrant.
+- `scripts/ingest_qdrant.py` – embed `data/processed/datamix.jsonl` into Qdrant (`clinical_docs`).
 - `scripts/eval_retrieval.py` – quick retrieval sanity check:
 
   ```bash

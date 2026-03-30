@@ -43,9 +43,11 @@ export default function ChatPage() {
       id: uid(),
       role: "assistant",
       content:
-        "Hi. This is a minimal chat UI—wire it to your backend when ready.",
+        "Hi. Add a short “About myself” note (symptoms, history, context), then ask your question below.",
     },
   ]);
+  /** Sent as `note_text` to `/v1/ask` (required by the API). */
+  const [aboutMyself, setAboutMyself] = useState("");
   const [draft, setDraft] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [assistantLoadingText, setAssistantLoadingText] = useState<string | null>(null);
@@ -53,15 +55,22 @@ export default function ChatPage() {
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  const canSend = useMemo(() => draft.trim().length > 0 && !isSending, [draft, isSending]);
+  const canSend = useMemo(
+    () =>
+      aboutMyself.trim().length > 0 &&
+      draft.trim().length > 0 &&
+      !isSending,
+    [aboutMyself, draft, isSending]
+  );
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
   }, [messages, assistantLoadingText]);
 
   async function handleSend() {
+    const note = aboutMyself.trim();
     const text = draft.trim();
-    if (!text || isSending) return;
+    if (!note || !text || isSending) return;
 
     setIsSending(true);
     setDraft("");
@@ -73,6 +82,7 @@ export default function ChatPage() {
     try {
       const response = await askClinicalQuestion({
         mode: "strict",
+        note_text: note,
         question: text,
       });
 
@@ -102,7 +112,8 @@ export default function ChatPage() {
           Chat
         </h1>
         <p className="text-sm text-slate-600">
-          Minimal internal chat console (UI scaffold).
+          Questions go to the gateway as <code className="text-xs">question</code>; your context
+          note is sent as <code className="text-xs">note_text</code> (required by the API).
         </p>
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input
@@ -214,6 +225,25 @@ export default function ChatPage() {
             handleSend();
           }}
         >
+          <div className="mb-3 space-y-1.5">
+            <label
+              htmlFor="chat-about"
+              className="block text-xs font-semibold uppercase tracking-wide text-slate-600"
+            >
+              About myself
+            </label>
+            <textarea
+              id="chat-about"
+              value={aboutMyself}
+              onChange={(e) => setAboutMyself(e.target.value)}
+              placeholder="e.g. Headache for 2 days, temperature 37.5°C, no prior migraines…"
+              rows={3}
+              className="w-full resize-y rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+            />
+            <p className="text-xs text-slate-500">
+              Used for every message in this session as the clinical note (<code>note_text</code>).
+            </p>
+          </div>
           <div className="flex items-end gap-3">
             <div className="flex-1">
               <label className="sr-only" htmlFor="chat-input">

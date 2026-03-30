@@ -33,6 +33,7 @@ __all__ = [
     "RiskBlock",
     "ScoreRequest",
     "ScoreResponse",
+    "TargetScoreResult",
     "SourceItem",
     "Status",
 ]
@@ -164,10 +165,32 @@ class RetrieveResponse(BaseModel):
 # -------------------------
 # Scoring service /v1/score
 # -------------------------
+class TargetScoreResult(BaseModel):
+    """Per-target output from the multi-target scorer."""
+
+    target: str
+    score: float = 0.0
+    label: Literal["low", "medium", "high"] = "low"
+    explanation: List[FeatureContribution] = []
+    ready: bool = True
+    detail: Optional[str] = Field(
+        default=None,
+        description="Unset when ready; otherwise reason (e.g. model not trained).",
+    )
+
+
 class ScoreRequest(BaseModel):
     trace_id: str
     entities: List[EntityItem] = []
     structured_features: Dict[str, Any] = {}
+    targets: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Risk targets to score. When omitted, only the default primary target "
+            "(triage_severity) runs. Unknown ids are rejected by the API."
+        ),
+    )
+
 
 class ScoreResponse(BaseModel):
     status: Status = "ok"
@@ -175,4 +198,8 @@ class ScoreResponse(BaseModel):
     score: float
     label: Literal["low", "medium", "high"]
     explanation: List[FeatureContribution] = []
+    target_results: Optional[Dict[str, TargetScoreResult]] = Field(
+        default=None,
+        description="Populated when the client explicitly requests `targets`.",
+    )
     error: Optional[ErrorInfo] = None

@@ -11,6 +11,7 @@ RUN uv sync --locked --no-install-project
 
 COPY services/shared ./services/shared
 COPY services/orchestrator/app ./app
+COPY services/orchestrator/agent_state.py services/orchestrator/agent_nodes.py services/orchestrator/agent_runtime.py ./
 RUN uv sync --locked --no-install-project
 
 ENV PATH="/app/.venv/bin:$PATH"
