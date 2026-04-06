@@ -134,3 +134,51 @@ def test_retrieval_meets_relevance_bar_accepts(monkeypatch):
     assert ok is True
     assert score == 1.0
     assert reason == ""
+
+
+def test_ask_supervised_pipeline_branch_mocked(monkeypatch):
+    """Supervised coordinator path returns AskResponse without calling downstream HTTP."""
+    from app.agents.base import AgentRole, AgentResult
+    from app.agents.coordinator import SupervisorCoordinator, SupervisorRunResult
+
+    async def fake_run(self, ctx):
+        struct = AgentResult(
+            agent_id=AgentRole.CLINICAL_STRUCTURING.value,
+            ok=True,
+            confidence=1.0,
+            payload={
+                "pii_redacted": True,
+                "entities": [],
+                "redacted_text": ctx.note_text,
+            },
+        )
+        return SupervisorRunResult(
+            trace_id=ctx.trace_id,
+            ok=True,
+            steps=[struct],
+            gate_accepted=False,
+            gate_reason="mock",
+            final_answer="Supervised answer",
+            entities=[],
+            sources=[],
+            risk={"score": 0.5, "label": "medium", "explanation": []},
+        )
+
+    monkeypatch.setenv("ORCHESTRATOR_SUPERVISOR_PIPELINE", "true")
+    monkeypatch.setattr(SupervisorCoordinator, "run", fake_run)
+
+    r = client.post(
+        "/v1/ask",
+        json={
+            "trace_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            "mode": "strict",
+            "note_text": "Patient note for supervised test.",
+            "question": "What is the plan?",
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["trace_id"] == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    assert data["answer"] == "Supervised answer"
+    assert "gate:mock" in data.get("warnings", [])
+    assert data.get("timings", {}).get("supervised_pipeline_flag") == 1.0

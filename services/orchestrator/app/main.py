@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import json
 import os
-import re
 import time
 from typing import Any, List, Optional
 
@@ -21,6 +20,21 @@ from agent_nodes import (
 )
 from agent_runtime import compile_linear_chain
 from agent_state import AgentState
+from app.note_query import (
+    build_enriched_retrieval_query,
+    normalize_text_key,
+    retrieval_cache_key,
+    sha256_hex,
+)
+from app.agents.base import SupervisorContext
+from app.agents.clinical_structuring_agent import ClinicalStructuringAgent
+from app.agents.scoring_agent import run_scoring_step
+from app.prompts.llm_ask import build_llm_prompt
+from app.agent_pipeline import agent_pipeline_debug, run_supervised_ask, supervisor_pipeline_enabled
+from app.relevance import retrieval_meets_relevance_bar
+
+# Backward compat for tests importing the relevance helper from this module.
+_retrieval_meets_relevance_bar = retrieval_meets_relevance_bar
 
 try:
     from redis.asyncio import Redis  # type: ignore
@@ -42,8 +56,6 @@ from services.shared.schemas_v1 import (
     RetrieveRequest,
     RetrieveResponse,
     RiskBlock,
-    ScoreRequest,
-    ScoreResponse,
     SourceItem,
 )
 
@@ -79,22 +91,8 @@ def _agent_mode_enabled() -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
-def _normalize_text_key(s: str) -> str:
-    return re.sub(r"\s+", " ", (s or "").strip().lower())
-
-
-def _sha256_hex(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8", errors="ignore")).hexdigest()
-
-
 def _note_text_hash(note_text: str) -> str:
     return hashlib.sha256((note_text or "").encode("utf-8", errors="ignore")).hexdigest()
-
-
-def _retrieval_cache_key(query: str, top_k: int, top_n: int, rerank: bool) -> str:
-    norm = _normalize_text_key(query)
-    payload = f"v1|q={norm}|top_k={top_k}|top_n={top_n}|rerank={int(rerank)}"
-    return f"orchestrator:retrieval:{_sha256_hex(payload)}"
 
 
 def _answer_cache_key(
@@ -105,13 +103,13 @@ def _answer_cache_key(
     *,
     use_agent: bool = False,
 ) -> str:
-    qn = _normalize_text_key(question)
+    qn = normalize_text_key(question)
     ids = ",".join(top_source_ids)
     if use_agent:
         payload = f"v1|q={qn}|note={note_hash}|ids={ids}|model={model_name}|agent=1"
     else:
         payload = f"v1|q={qn}|note={note_hash}|ids={ids}|model={model_name}"
-    return f"orchestrator:answer:{_sha256_hex(payload)}"
+    return f"orchestrator:answer:{sha256_hex(payload)}"
 
 
 async def _get_redis() -> Optional["Redis"]:
@@ -155,6 +153,16 @@ async def _cache_set_json(trace_id: str, key: str, value: dict[str, Any], ttl_se
         )
 
 
+class _OrchestratorRetrievalCache:
+    """Adapter: supervised retrieval agent uses the same Redis keys as the legacy path."""
+
+    async def get_json(self, trace_id: str, key: str) -> dict[str, Any] | None:
+        return await _cache_get_json(trace_id, key)
+
+    async def set_json(self, trace_id: str, key: str, value: dict[str, Any], ttl_sec: int) -> None:
+        await _cache_set_json(trace_id, key, value, ttl_sec)
+
+
 def _pii_url() -> str:
     base = os.getenv("PII_SERVICE_URL", "http://pii-service:8020")
     return f"{base.rstrip('/')}/v1/redact"
@@ -173,149 +181,6 @@ def _retrieval_url() -> str:
 def _scoring_url() -> str:
     base = os.getenv("SCORING_SERVICE_URL", "http://scoring-service:8050")
     return f"{base.rstrip('/')}/v1/score"
-
-
-def _summarize_note(text: str, max_chars: int = 400) -> str:
-    """
-    Lightweight note summary: first 1–2 sentences, truncated to max_chars.
-    Works on redacted text; avoids calling an LLM at this stage.
-    """
-    if not text:
-        return ""
-    stripped = text.strip()
-    if len(stripped) <= max_chars:
-        return stripped
-
-    # Split into sentences and keep the first couple
-    sentences = re.split(r"(?<=[.!?])\s+", stripped)
-    if not sentences:
-        return stripped[:max_chars]
-
-    summary = sentences[0]
-    if len(summary) < max_chars and len(sentences) > 1:
-        summary = f"{summary} {sentences[1]}"
-    return summary[:max_chars]
-
-
-def _entities_hint(entities: List[EntityItem], max_entities: int = 8) -> str:
-    """Render entities into a short hint string for retrieval queries."""
-    if not entities:
-        return ""
-    parts = []
-    for e in entities[:max_entities]:
-        parts.append(f"{e.type}: {e.text}")
-    return "; ".join(parts)
-
-
-def _build_llm_prompt(
-    question: str,
-    entities: List[EntityItem],
-    sources: List[SourceItem],
-    risk: RiskBlock | None,
-    trace_id: str,
-) -> str:
-    """
-    Construct a single prompt string for llm-service from question, entities, passages, and risk.
-
-    Strict grounding: the model must answer using only the "Top evidence passages" text.
-    - Uses only the top 3 passages by score for evidence text.
-    - For each passage, includes source_id, title (when available), and text.
-    - Truncates the total context to a safe maximum length.
-    - Preserves deterministic ordering by descending score (stable for ties).
-    - Logs the number of passages used and total context length.
-    """
-    MAX_CONTEXT_CHARS = 6000
-
-    lines: List[str] = []
-
-    lines.append(
-        "You are a clinical decision support assistant. Your answer must follow strict "
-        "grounding rules below. All clinical and factual content in your answer must come "
-        "only from the section titled 'Top evidence passages.' Do not use general medical "
-        "knowledge, guidelines you were trained on, or inference beyond what is explicitly "
-        "written there. Extracted entities and risk scores are auxiliary context only: do not "
-        "state any fact that is not directly supported by wording in those passages."
-    )
-    lines.append("")
-    lines.append(f"Question:\n{question}")
-
-    if entities:
-        lines.append("")
-        lines.append("Extracted entities:")
-        for e in entities[:20]:
-            lines.append(f"- {e.type}: {e.text} (span {e.start}-{e.end})")
-
-    # Context from retrieval: top 3 passages by score, deterministic order.
-    context_lines: List[str] = []
-    num_passages_used = 0
-    if sources:
-        context_lines.append("")
-        context_lines.append("Top evidence passages:")
-
-        # Sort by score descending; stable sort preserves original order for ties.
-        top_sources = sorted(sources, key=lambda s: s.score if s.score is not None else 0.0, reverse=True)[
-            :3
-        ]
-
-        for idx, s in enumerate(top_sources, start=1):
-            title = s.title or (s.metadata.get("title") if s.metadata else None)
-            header = f"Passage {idx} (source_id={s.source_id})"
-            if title:
-                header += f" - {title}"
-            context_lines.append(header + ":")
-            context_lines.append(s.snippet or "")
-            context_lines.append("")
-            num_passages_used += 1
-
-    # Risk block (not retrieval-grounded; included for alignment only)
-    if risk is not None:
-        context_lines.append("")
-        context_lines.append(
-            "Risk assessment (not part of evidence passages — do not use in the answer "
-            "unless the same facts appear verbatim or by clear paraphrase in Top evidence passages above):"
-        )
-        context_lines.append(f"- Overall risk label: {risk.label}")
-        context_lines.append(f"- Risk score: {risk.score:.2f}")
-        if risk.explanation:
-            context_lines.append("- Top contributing factors:")
-            for feat in risk.explanation[:5]:
-                context_lines.append(f"  - {feat.feature}: {feat.contribution:.3f}")
-
-    # Assemble context and enforce a safe maximum length.
-    context_text = "\n".join(context_lines)
-    if len(context_text) > MAX_CONTEXT_CHARS:
-        context_text = context_text[:MAX_CONTEXT_CHARS]
-
-    # Log context stats before sending to llm-service.
-    logger.info(
-        "llm_context_built",
-        extra={
-            "trace_id": trace_id,
-            "num_passages": num_passages_used,
-            "context_length": len(context_text),
-        },
-    )
-
-    if context_text:
-        lines.append("")
-        lines.append(context_text)
-
-    lines.append("")
-    lines.append(
-        "Instructions (strict grounding — follow in order):\n"
-        "1. Answer the question using ONLY information explicitly stated in "
-        "'Top evidence passages' above. Quote or paraphrase only what appears there.\n"
-        "2. If there are no evidence passages, or the passages do not contain enough "
-        "information to answer the question, respond with exactly this single line and nothing else:\n"
-        "Insufficient data\n"
-        "3. Do NOT add facts, drug names, doses, guideline names, pathophysiology, or "
-        "treatment recommendations unless they appear in those passages.\n"
-        "4. Do NOT infer, speculate, or fill gaps with external or prior knowledge. "
-        "If the question cannot be answered from the passages alone, output only: Insufficient data\n"
-        "5. Keep the answer concise and clinician-facing when you do answer from passages."
-    )
-
-    return "\n".join(lines)
 
 
 def _synthesize_answer(question: str, sources: List[SourceItem], risk: RiskBlock | None) -> str:
@@ -370,50 +235,6 @@ def _stub_risk() -> RiskBlock:
     )
 
 
-def _retrieval_relevance_gate_enabled() -> bool:
-    """When false, skip score/snippet gating (retrieval still runs)."""
-    raw = os.getenv("ORCHESTRATOR_RETRIEVAL_RELEVANCE_GATE", "true").strip().lower()
-    return raw not in ("0", "false", "no", "off")
-
-
-def _retrieval_meets_relevance_bar(sources: List[SourceItem]) -> tuple[bool, float, str]:
-    """
-    Decide whether retrieved evidence is strong enough to call the LLM.
-
-    Returns (accept, top_score, reason). reason is empty when accept is True.
-    When accept is False, answer must be refusal only (no LLM / no template synthesis).
-
-    Scores are cross-encoder logits when retrieval uses rerank=True (default in ask).
-    Tune ORCHESTRATOR_RETRIEVAL_MIN_TOP_SCORE for your stack (e.g. lower ~0.35 if using
-    cosine-only retrieval without rerank).
-    """
-    if not _retrieval_relevance_gate_enabled():
-        top = max((float(s.score) for s in sources if s.score is not None), default=0.0)
-        return True, top, ""
-
-    if not sources:
-        return False, 0.0, "no_passages"
-
-    min_score = float(os.getenv("ORCHESTRATOR_RETRIEVAL_MIN_TOP_SCORE", "1.0"))
-    min_snippet = int(os.getenv("ORCHESTRATOR_RETRIEVAL_MIN_TOP_SNIPPET_CHARS", "24"))
-
-    top = max(
-        sources,
-        key=lambda s: float(s.score) if s.score is not None else float("-inf"),
-    )
-    top_score_l = float(top.score) if top.score is not None else float("-inf")
-    top_score = top_score_l if top_score_l != float("-inf") else 0.0
-
-    if top_score_l < min_score:
-        return False, top_score, "below_min_score"
-
-    snippet = (top.snippet or "").strip()
-    if len(snippet) < min_snippet:
-        return False, top_score, "weak_snippet"
-
-    return True, top_score, ""
-
-
 app = FastAPI(title="Clinical AI Orchestrator", version="0.1.0")
 app.add_middleware(structured_log_middleware("orchestrator"))
 
@@ -440,13 +261,30 @@ async def ask(request: AskRequest) -> AskResponse:
     """
     trace_id = request.trace_id
     set_trace_id(trace_id)
+    t_request_start = time.perf_counter()
+    timeout = get_timeout()
+
+    if supervisor_pipeline_enabled():
+        logger.info(
+            "supervised_pipeline_branch",
+            extra={"trace_id": trace_id, "debug": agent_pipeline_debug(request)},
+        )
+        async with create_client(timeout=timeout) as client:
+            cache = _OrchestratorRetrievalCache() if _cache_enabled() else None
+            return await run_supervised_ask(
+                request,
+                client,
+                timeout,
+                retrieval_cache=cache,
+                debug=agent_pipeline_debug(request),
+                t_request_start=t_request_start,
+            )
+
     agent_mode_flag = _agent_mode_enabled()
     logger.info(
         "agent_mode_enabled",
         extra={"trace_id": trace_id, "enabled": agent_mode_flag},
     )
-    t_request_start = time.perf_counter()
-    timeout = get_timeout()
     warnings: List[str] = []
 
     pii_duration_ms: float = 0.0
@@ -466,6 +304,8 @@ async def ask(request: AskRequest) -> AskResponse:
     pii_redacted = False
     # 2) NER extraction (uses redacted text)
     entities: List[EntityItem] = []
+    structured_features: dict[str, Any] = {}
+    structuring_signals: dict[str, Any] = {}
     # 3) Retrieval (sources from retrieval-service only)
     sources: List[SourceItem] = []
     # 4) Scoring (uses entities from NER)
@@ -508,21 +348,24 @@ async def ask(request: AskRequest) -> AskResponse:
         )
         if data is not None:
             entities = data.entities
+            _extra = ClinicalStructuringAgent.enrich(
+                redacted_text,
+                list(entities),
+                pii_redacted=pii_redacted,
+            )
+            structured_features = dict(_extra["structured_features"])
+            structuring_signals = dict(_extra.get("signals") or {})
+            for m in _extra.get("missing_inputs") or []:
+                warnings.append(f"missing:{m}")
 
         # 3) Build enriched retrieval query from question, entities, and note summary.
-        enriched_query = request.question
-        ent_hint = _entities_hint(entities)
-        if ent_hint:
-            enriched_query += f"\n\nKey entities: {ent_hint}"
-        note_summary = _summarize_note(redacted_text)
-        if note_summary:
-            enriched_query += f"\n\nNote summary: {note_summary}"
+        enriched_query = build_enriched_retrieval_query(request.question, redacted_text, entities)
 
         async def _run_retrieval() -> RetrieveResponse | None:
             nonlocal retrieval_duration_ms
             nonlocal retrieval_cache_hit
             retrieval_t0 = time.perf_counter()
-            cache_key = _retrieval_cache_key(enriched_query, top_k=50, top_n=3, rerank=True)
+            cache_key = retrieval_cache_key(enriched_query, top_k=50, top_n=3, rerank=True)
             cached = await _cache_get_json(trace_id, cache_key)
             if cached is not None and cached.get("v") == 1 and "retrieval" in cached:
                 try:
@@ -573,32 +416,42 @@ async def ask(request: AskRequest) -> AskResponse:
                 )
             return retrieval_data
 
-        async def _run_scoring() -> ScoreResponse | None:
-            nonlocal scoring_duration_ms
+        async def _run_scoring_agent() -> None:
+            nonlocal risk, scoring_duration_ms
             scoring_t0 = time.perf_counter()
-            score_data, _, _ = await post_typed(
-                client,
-                _scoring_url(),
-                ScoreRequest(
-                    trace_id=trace_id,
-                    entities=entities,
-                    structured_features={},
-                ),
-                ScoreResponse,
-                timeout=timeout,
+            ctx = SupervisorContext(
                 trace_id=trace_id,
+                question=request.question,
+                note_text=request.note_text,
+                client=client,
+                timeout=timeout,
             )
-            scoring_duration_ms = (time.perf_counter() - scoring_t0) * 1000.0
+            res = await run_scoring_step(
+                ctx,
+                list(entities),
+                structured_features=structured_features,
+                signals=structuring_signals,
+            )
+            scoring_duration_ms = res.duration_ms
             logger.info(
                 "latency_scoring_service",
                 extra={"trace_id": trace_id, "duration_ms": scoring_duration_ms},
             )
-            return score_data
+            for w in res.warnings:
+                if w not in warnings:
+                    warnings.append(w)
+            if res.ok and res.payload:
+                expl = res.payload.get("explanation") or []
+                risk = RiskBlock(
+                    score=float(res.payload["score"]),
+                    label=res.payload["label"],
+                    explanation=[FeatureContribution.model_validate(x) for x in expl],
+                )
 
         # Parallelize retrieval + scoring (independent once entities exist).
-        retrieval_result, scoring_result = await asyncio.gather(
+        retrieval_result, _ = await asyncio.gather(
             _run_retrieval(),
-            _run_scoring(),
+            _run_scoring_agent(),
             return_exceptions=False,
         )
 
@@ -622,15 +475,8 @@ async def ask(request: AskRequest) -> AskResponse:
                 for p in retrieval_result.passages
             ]
 
-        if scoring_result is not None:
-            risk = RiskBlock(
-                score=scoring_result.score,
-                label=scoring_result.label,
-                explanation=scoring_result.explanation,
-            )
-
     # Relevance gate: refuse before LLM when retrieval is empty or scores/snippets are weak.
-    accept_retrieval, top_rel_score, relevance_reason = _retrieval_meets_relevance_bar(sources)
+    accept_retrieval, top_rel_score, relevance_reason = retrieval_meets_relevance_bar(sources)
     if not accept_retrieval:
         warnings.append(f"retrieval_relevance:{relevance_reason}")
         logger.info(
@@ -731,7 +577,7 @@ async def ask(request: AskRequest) -> AskResponse:
                     )
                 else:
                     llm_client = LLMClient()
-                    prompt = _build_llm_prompt(
+                    prompt = build_llm_prompt(
                         question=request.question,
                         entities=entities,
                         sources=sources,

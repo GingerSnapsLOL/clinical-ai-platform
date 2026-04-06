@@ -99,6 +99,7 @@ class AskResponse(BaseModel):
     entities: List[EntityItem] = []
     risk: Optional[RiskBlock] = None
     warnings: List[str] = []
+    citations: List[CitationItem] = []
     # Latency timings (populated by orchestrator; optional for backward compat)
     total_request_time_ms: Optional[float] = None
     retrieval_time_ms: Optional[float] = None
