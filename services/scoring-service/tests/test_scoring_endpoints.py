@@ -25,7 +25,7 @@ def test_health():
 
 
 def test_default_triage_uses_model_specific_explanation():
-    """Implicit primary is triage_severity with triage-prefixed explanation rows."""
+    """Implicit primary is triage_severity; ML score + signal-based explanation rows."""
     r = client.post(
         "/v1/score",
         json={
@@ -37,12 +37,13 @@ def test_default_triage_uses_model_specific_explanation():
     assert r.status_code == 200
     data = r.json()
     assert data["trace_id"] == "tid-1"
-    # 0.12 * 0.58 = 0.0696 on triage_chronic_cardiometabolic
-    assert data["score"] == pytest.approx(0.0696, rel=1e-4, abs=1e-5)
-    assert data["label"] == "low"
-    assert len(data["explanation"]) == 1
-    assert data["explanation"][0]["feature"] == "triage_chronic_cardiometabolic"
-    assert data["explanation"][0]["contribution"] == pytest.approx(0.0696, rel=1e-4)
+    assert 0.0 <= data["score"] <= 1.0
+    assert data["label"] in ("low", "medium", "high")
+    assert len(data["explanation"]) >= 1
+    assert data["explanation"][0]["feature"].startswith("triage_input:")
+    assert sum(x["contribution"] for x in data["explanation"]) == pytest.approx(
+        data["score"], rel=1e-5, abs=1e-5
+    )
 
 
 def test_triage_acute_symptom_signal():
@@ -59,8 +60,8 @@ def test_triage_acute_symptom_signal():
     assert r.status_code == 200
     data = r.json()
     feats = {e["feature"] for e in data["explanation"]}
-    assert "triage_acute_cardiopulmonary" in feats
-    assert data["score"] > 0.12
+    assert any("symptom_chest_pain" in f for f in feats)
+    assert data["score"] > 0.0
 
 
 def test_score_no_triggers_empty_explanation():
@@ -74,9 +75,9 @@ def test_score_no_triggers_empty_explanation():
     )
     assert r.status_code == 200
     data = r.json()
-    assert data["score"] == 0.0
     assert data["label"] == "low"
     assert data["explanation"] == []
+    assert data["score"] < 0.35
 
 
 def test_score_structured_numeric_triage():
@@ -90,12 +91,13 @@ def test_score_structured_numeric_triage():
     )
     assert r.status_code == 200
     data = r.json()
-    assert data["score"] == pytest.approx(0.15)
-    assert data["explanation"][0]["feature"] == "triage_hemodynamic_stress"
+    assert data["score"] > 0.0
+    feats = {e["feature"] for e in data["explanation"]}
+    assert any("bp_systolic_elevated" in f for f in feats)
 
 
 def test_triage_multi_signal_medium_band():
-    """Several comorbidities push triage into medium without hitting clamp at 1.0."""
+    """Several comorbidities produce a richer feature vector for the triage model."""
     r = client.post(
         "/v1/score",
         json={
@@ -114,8 +116,8 @@ def test_triage_multi_signal_medium_band():
     )
     assert r.status_code == 200
     data = r.json()
-    assert data["score"] == pytest.approx(0.3492, rel=1e-3)
-    assert data["label"] == "medium"
+    assert data["label"] in ("medium", "high")
+    assert data["score"] >= 0.25
     assert sum(x["contribution"] for x in data["explanation"]) == pytest.approx(
         data["score"], rel=1e-5
     )
@@ -139,10 +141,9 @@ def test_deduplicate_same_canonical_feature_max_weight():
     )
     assert r.status_code == 200
     data = r.json()
-    # 0.14 * 0.62 = 0.0868
-    assert data["score"] == pytest.approx(0.0868, rel=1e-4)
+    assert 0.0 <= data["score"] <= 1.0
     assert len(data["explanation"]) == 1
-    assert data["explanation"][0]["feature"] == "triage_chronic_cardiometabolic"
+    assert "disease_diabetes" in data["explanation"][0]["feature"]
 
 
 def test_implicit_request_omits_target_results_block():
@@ -176,7 +177,7 @@ def test_explicit_targets_triage_and_cardiovascular():
     tr = data["target_results"]
     assert tr is not None
     assert tr["triage_severity"]["ready"] is True
-    assert tr["triage_severity"]["score"] == pytest.approx(0.0696, rel=1e-3)
+    assert 0.0 <= tr["triage_severity"]["score"] <= 1.0
     assert tr["cardiovascular_risk"]["score"] == pytest.approx(0.12)
     assert tr["cardiovascular_risk"]["explanation"][0]["feature"] == "disease_hypertension"
     assert data["score"] == pytest.approx(tr["triage_severity"]["score"], rel=1e-4)

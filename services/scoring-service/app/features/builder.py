@@ -8,7 +8,8 @@ shared clinical signal catalog (e.g. for future ``stroke_risk`` / ``diabetes_ris
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from services.shared.schemas_v1 import ScoreRequest
 
@@ -21,6 +22,8 @@ class ExtractedFeatures:
 
     trace_id: str
     signals: dict[str, float]
+    structured_features: dict[str, Any] = field(default_factory=dict)
+    entity_count: int = 0
 
 
 def _merge_max_per_key(pairs: list[tuple[str, float]]) -> dict[str, float]:
@@ -36,4 +39,10 @@ def extract_features(request: ScoreRequest) -> ExtractedFeatures:
         request.entities
     ) + rules.collect_structured_contributions(request.structured_features)
     signals = _merge_max_per_key(fired)
-    return ExtractedFeatures(trace_id=request.trace_id, signals=signals)
+    structured = dict(request.structured_features or {})
+    return ExtractedFeatures(
+        trace_id=request.trace_id,
+        signals=signals,
+        structured_features=structured,
+        entity_count=len(request.entities or []),
+    )

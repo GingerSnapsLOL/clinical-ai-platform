@@ -1,12 +1,22 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
 
 from app import engine
 from app.config import settings
 from app.targets import valid_target_ids
+from app.models.loader import ensure_target_loaded
 from services.shared.logging_util import structured_log_middleware
 from services.shared.schemas_v1 import HealthResponse, ScoreRequest, ScoreResponse
 
-app = FastAPI(title="Scoring Service", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    ensure_target_loaded("triage_severity")
+    yield
+
+
+app = FastAPI(title="Scoring Service", version="0.1.0", lifespan=lifespan)
 app.add_middleware(structured_log_middleware("scoring-service"))
 
 
