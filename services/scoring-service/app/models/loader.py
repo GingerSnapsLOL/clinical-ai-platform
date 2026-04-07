@@ -45,6 +45,12 @@ DEFAULT_MODELS_ROOT = Path("models")
 MODEL_FILENAME = "model.pkl"
 FEATURE_SPEC_FILENAME = "feature_spec.json"
 METRICS_FILENAME = "metrics.json"
+ALLOW_MOCK_MODEL_ENV = "SCORING_ALLOW_MOCK_MODEL"
+
+
+def _allow_mock_model() -> bool:
+    raw = os.getenv(ALLOW_MOCK_MODEL_ENV, "true").strip().lower()
+    return raw in ("1", "true", "yes", "on")
 
 
 class ModelLoadError(RuntimeError):
@@ -142,8 +148,93 @@ def _synthetic_spec_from_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+class _DeterministicMockEstimator:
+    """Simple deterministic baseline used when model artifacts are absent."""
+
+    def __init__(self, feature_names: Sequence[str]) -> None:
+        self.feature_names = tuple(str(x) for x in feature_names)
+        self.classes_ = np.asarray([0, 1, 2], dtype=np.int64)
+        self._ix = {n: i for i, n in enumerate(self.feature_names)}
+
+    def _col(self, X: np.ndarray, name: str) -> np.ndarray:
+        i = self._ix.get(name)
+        if i is None:
+            return np.zeros((X.shape[0],), dtype=np.float64)
+        return X[:, i]
+
+    def _risk(self, X: np.ndarray) -> np.ndarray:
+        age = self._col(X, "age")
+        symptoms = self._col(X, "num_symptoms")
+        risk_factors = self._col(X, "num_risk_factors")
+        chest_pain = self._col(X, "has_chest_pain")
+        dyspnea = self._col(X, "has_dyspnea")
+        neuro = self._col(X, "has_neuro_deficit")
+
+        linear = (
+            0.10
+            + 0.003 * np.clip(age, 0.0, 120.0)
+            + 0.09 * np.clip(symptoms, 0.0, 10.0)
+            + 0.07 * np.clip(risk_factors, 0.0, 20.0)
+            + 0.10 * np.clip(chest_pain, 0.0, 1.0)
+            + 0.08 * np.clip(dyspnea, 0.0, 1.0)
+            + 0.17 * np.clip(neuro, 0.0, 1.0)
+        )
+        return np.clip(linear, 0.0, 1.0)
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        X = np.asarray(X, dtype=np.float64)
+        risk = self._risk(X)
+        p_high = np.clip((risk - 0.45) / 0.55, 0.0, 1.0)
+        p_med = np.clip(1.0 - np.abs(risk - 0.5) / 0.5, 0.0, 1.0) * (1.0 - p_high * 0.35)
+        p_low = np.clip(1.0 - p_high - p_med, 0.0, 1.0)
+        probs = np.stack([p_low, p_med, p_high], axis=1)
+        denom = probs.sum(axis=1, keepdims=True)
+        denom = np.where(denom <= 0.0, 1.0, denom)
+        return probs / denom
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        probs = self.predict_proba(X)
+        return np.argmax(probs, axis=1).astype(np.int64)
+
+
+def _mock_bundle_for_target(target_id: str) -> dict[str, Any]:
+    # Must match triage feature map in app.targets.triage._build_feature_map
+    triage_features = [
+        "age",
+        "sex_enc",
+        "num_symptoms",
+        "num_risk_factors",
+        "has_chest_pain",
+        "has_dyspnea",
+        "has_neuro_deficit",
+        "smoking",
+        "hypertension",
+        "diabetes",
+        "text_length",
+        "entity_count",
+    ]
+    if target_id != "triage_severity":
+        raise ModelLoadError(
+            f"model file not found and no mock fallback available for target={target_id!r}"
+        )
+    return {
+        "model": _DeterministicMockEstimator(triage_features),
+        "feature_names": triage_features,
+        "model_type": "deterministic_mock_baseline",
+        "label_mapping": {"low": 0, "medium": 1, "high": 2},
+        "label_names": ["low", "medium", "high"],
+    }
+
+
 def _load_joblib_bundle(path: Path) -> dict[str, Any]:
     if not path.is_file():
+        target_id = path.parent.name
+        if _allow_mock_model():
+            logger.warning(
+                "model_file_missing_using_mock",
+                extra={"target_id": target_id, "path": str(path), "env": ALLOW_MOCK_MODEL_ENV},
+            )
+            return _mock_bundle_for_target(target_id)
         raise ModelLoadError(f"model file not found: {path}")
     bundle = joblib.load(path)
     if not isinstance(bundle, dict) or "model" not in bundle:
