@@ -1,105 +1,87 @@
 ## Clinical AI Platform
 
-Privacy-first clinical AI backend focused on **PII redaction**, **biomedical NER**, **RAG over Qdrant with cross‑encoder reranking**, **multi-target risk scoring**, and **strictly grounded answer synthesis**.  
-All services are Dockerized FastAPI microservices with shared typed contracts (`services/shared/schemas_v1.py`) and `trace_id` on every hop.
+Privacy-first clinical AI microservice stack for clinical question answering with grounded retrieval and risk scoring.
 
-This README focuses on **how to run the system**. For design detail:
+Core contract:
 
-- `docs/architecture.md`
-- `docs/roadmap.md`
-- `docs/api_contracts.md`
-- `docs/implementation_plan.md`
+- Public API stays `POST /v1/ask` on `gateway-api` (`:8000`)
+- Shared models live in `services/shared/schemas_v1.py`
+- `trace_id` is propagated across all hops
 
----
+## Current services
 
-## Services and current behavior
+| Service | Port | Purpose |
+|---|---:|---|
+| `gateway-api` | `8000` | Public entrypoint. Accepts `trace_id` optional, generates one if missing, forwards to orchestrator. |
+| `orchestrator` | `8010` | End-to-end flow orchestration and final `AskResponse` assembly. |
+| `pii-service` | `8020` | PII redaction (`POST /v1/redact`). |
+| `ner-service` | `8030` | Clinical entity extraction (`POST /v1/extract`). |
+| `retrieval-service` | `8040` | Corpus ingest + retrieval over Qdrant (`POST /v1/retrieve`). |
+| `scoring-service` | `8050` | Multi-target scoring (`POST /v1/score`). |
+| `llm-service` | `8060` | Text generation endpoint used by orchestrator synthesis paths. |
+| `frontend` | `3000` | Internal UI for ask flow. |
 
-### Service map
+Stateful dependencies in compose:
 
-| Service | Port | Role |
-|--------|------|------|
-| **Gateway API** | `:8000` | Public `POST /v1/ask`; validates payload; forwards to orchestrator. |
-| **Orchestrator** | `:8010` | Full ask pipeline: PII → NER → **retrieval ∥ scoring** → relevance gate → answer synthesis (see below). Optional **Redis** answer/retrieval cache. |
-| **PII Service** | `:8020` | `POST /v1/redact` — redacted text + spans. |
-| **NER Service** | `:8030` | `POST /v1/extract` — entities on redacted text. |
-| **Retrieval Service** | `:8040` | `POST /v1/ingest`, `POST /v1/retrieve` — Qdrant embeddings + reranked passages. |
-| **Scoring Service** | `:8050` | `POST /v1/score` — rule-based signals; **multi-target** (`triage_severity` default; optional `targets=[...]`). |
-| **LLM Service** | `:8060` | `POST /v1/generate` — text generation for orchestrator prompts. |
+- `postgres` (`5432`)
+- `redis` (`6379`)
+- `qdrant` (`6333`)
 
-### Orchestrator ask flow
+## Orchestrator behavior (as of now)
 
-1. **PII** then **NER** on redacted note.
-2. **Retrieval** and **scoring** run **in parallel** (same trace; scoring uses entities only).
-3. **Relevance gate** may return `Insufficient data` without calling the LLM.
-4. **Answer path**
-   - **Default (`ORCHESTRATOR_AGENT_MODE=false`)**: single structured prompt + one `llm-service` call (`_build_llm_prompt`).
-   - **Agent mode (`ORCHESTRATOR_AGENT_MODE=true`)**: internal **async runtime** (no LangGraph) — select top sources → draft (JSON: `answer`, `used_source_ids`) → verifier (JSON: `is_grounded`, `has_sufficient_evidence`, `problems`) → finalize. Same `AskResponse` schema; extra timing keys when the agent runs.
+`POST /v1/ask` in `services/orchestrator/app/main.py` supports two internal paths:
 
-Agent modules live next to `app/` (e.g. `services/orchestrator/agent_state.py`, `agent_nodes.py`, `agent_runtime.py`) and are copied into the orchestrator image.
+1. **Supervised multi-agent pipeline** (`ORCHESTRATOR_SUPERVISOR_PIPELINE=true`)
+   - Runs `SupervisorCoordinator.run()` with bounded deterministic steps:
+     - clinical structuring
+     - retrieval + scoring
+     - relevance gate
+     - evidence critic
+     - safety
+     - synthesis
+   - Includes step logging with `trace_id`
+   - Supports debug metadata via `ORCHESTRATOR_AGENT_DEBUG=true` or `user_context.debug`
+   - Enforces max step budget (`MAX_WORKFLOW_STEPS_V1`) to prevent loops
 
-Design note: orchestration is explicit Python/async rather than LangChain/LangGraph for predictable latency, clear service boundaries, and simpler debugging.
+2. **Legacy orchestrator path** (`ORCHESTRATOR_SUPERVISOR_PIPELINE=false`)
+   - PII -> NER -> retrieval + scoring -> relevance gate -> answer generation
+   - Optional internal agent runtime controlled by `ORCHESTRATOR_AGENT_MODE`
 
-### End-to-end path (conceptual)
+Response contract remains `AskResponse` (includes `answer`, `sources`, `entities`, `risk`, `warnings`, `citations`, timings).
 
-`gateway-api` → `orchestrator` → (`pii-service` → `ner-service`) → (`retrieval-service` ∥ `scoring-service`) → `llm-service` (and/or internal agent nodes) → aggregated `AskResponse`.
+## Scoring service startup fallback (new)
 
-### Contracts and traceability
+`scoring-service` now supports booting without a trained model artifact.
 
-- Shared schemas: `services/shared/schemas_v1.py`.
-- Every hop carries **`trace_id`** (header + body where defined).
-- **`GET /health`** on each service for smoke checks.
+- If `/app/models/triage_severity/model.pkl` is missing and `SCORING_ALLOW_MOCK_MODEL=true` (default), loader uses a deterministic in-memory mock baseline model.
+- This is intended for development/bootstrap before training.
+- To enforce real artifacts in stricter environments:
+  - set `SCORING_ALLOW_MOCK_MODEL=false`
 
----
-
-## Local run instructions
-
-### Prerequisites
-
-- **Python** 3.11+
-- **uv** (optional for local dev; Docker builds use per-service locks)
-- **Docker + Docker Compose**
-- **make** (recommended)
-- **Hardware**: `llm-service` may load **Qwen/Qwen2.5-7B-Instruct**; GPU helps; CPU-only is slow.
-
-Installation hints: Python from `python.org` / `pyenv`; uv from [docs.astral.sh/uv](https://docs.astral.sh/uv/); Docker from [docs.docker.com](https://docs.docker.com/get-docker/); on Windows, prefer **WSL2** for `make` and paths.
-
-### 1. Environment and stack
+## Quick start
 
 ```bash
 cp .env.example .env
-make up           # setup, lock, base image, build service images, docker compose up -d
+make up
+```
+
+Useful commands:
+
+```bash
 make logs
-make down         # docker compose down -v (removes volumes)
-
-# Docker images only (no compose up):
-make all          # lock + base-image + build
-
-# Full test suite after images build:
-make ci           # make all && make test
-
-# After stack is up: one-shot ingest (see Makefile — `all-ingest` chains `up` + `ingest`):
-# make all-ingest
+make ps
+make health
+make down
 ```
 
-**Local uv (monorepo root)**
+Rebuild only:
 
 ```bash
-uv sync
+make build
+docker compose up -d
 ```
 
-### 2. Ingest retrieval corpus (when using Qdrant)
-
-Qdrant should be reachable at `http://localhost:6333` (compose includes `qdrant`).
-
-```bash
-make ingest
-# or, if datamix already exists:
-uv run python scripts/ingest_qdrant.py
-```
-
-### 3. Smoke checks
-
-**Health**
+## Health checks
 
 ```bash
 curl -fsS http://localhost:8000/health && echo " gateway"
@@ -111,119 +93,108 @@ curl -fsS http://localhost:8050/health && echo " scoring"
 curl -fsS http://localhost:8060/health && echo " llm"
 ```
 
-**`POST /v1/ask` (via gateway, strict)**
+## Ask API example
 
 ```bash
 curl -X POST http://localhost:8000/v1/ask \
   -H "Content-Type: application/json" \
   -d '{
     "mode": "strict",
-    "note_text": "Patient has hypertension treated with lisinopril.",
-    "question": "What are key monitoring considerations?"
+    "note_text": "65-year-old with hypertension and diabetes on ACE inhibitor.",
+    "question": "What monitoring should be prioritized?"
   }'
 ```
 
-With retrieval + LLM healthy you should see a non-empty `answer`, `entities`, `sources` (up to top_n passages), `risk` from scoring-service, and optional `timings` (including per-stage ms when populated).
+## Frontend (Next.js)
 
-### 4. Scripts (selection)
+Frontend lives in `frontend/` and is used as an internal clinical testing console.
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/ingest_qdrant.py` | Embed `data/processed/datamix.jsonl` into Qdrant. |
-| `scripts/eval_retrieval.py` | Retrieval sanity check. |
-| `scripts/demo_m1.py` | Basic `/v1/ask` demo. |
-| `scripts/demo_m4.py` | Rich demo (answer, citations, sources, entities, risk). |
+Stack:
 
----
+- Next.js (App Router)
+- TypeScript
+- Tailwind CSS
+- ESLint
 
-## Frontend console (Next.js)
+Implemented pages and modules:
 
-Internal testing UI under `frontend/` for `/v1/ask`.
+- `frontend/app/page.tsx` - landing page
+- `frontend/app/ask/page.tsx` - main ask console
+- `frontend/app/api/ask/route.ts` - proxy route to backend `/v1/ask`
+- `frontend/components/*` - reusable UI panels/cards
+- `frontend/lib/api.ts` and `frontend/lib/types.ts` - typed frontend API layer
 
-- **Run**: `make frontend-install` / `make frontend-dev`, or `docker compose` includes a **frontend** service (~`:3000`).
-- **Config**: `frontend/.env.local` — e.g. `BACKEND_BASE_URL=http://localhost:8000`
-- **UI**: `http://localhost:3000`, ask flow at `/ask`
+Current UX capabilities:
 
-See `frontend/README.md` if present for component layout.
+- answer panel with loading/error states
+- sources evidence cards (title, metadata, relevance, snippet)
+- entities panel
+- risk panel with low/medium/high badge and explanation
+- diagnostics panel (total/retrieval/llm timings)
+- trace/debug collapsible panel (`trace_id`, warnings, retrieval diagnostics)
+- compare mode (Answer A vs Answer B with latency/source differences)
+- one-click demo prompt prefills
 
----
+Frontend environment:
 
-## Repository structure (high level)
-
-```text
-clinical-ai-platform/
-  README.md
-  Makefile
-  docker-compose.yml
-  pyproject.toml
-  uv.lock
-  docs/
-    architecture.md
-    roadmap.md
-    api_contracts.md
-    implementation_plan.md
-  services/
-    gateway-api/
-    orchestrator/          # app/main.py + agent_*.py (runtime), tests/
-    pii-service/
-    ner-service/
-    retrieval-service/
-    scoring-service/      # multi-target scoring; features/rules under app/
-    llm-service/
-    shared/               # schemas, http_client, llm_client, logging
-  frontend/
-  scripts/
-  examples/
-  data/                  # processed/interim corpora (e.g. datamix.jsonl)
-  infra/
+```env
+BACKEND_BASE_URL=http://localhost:8000
 ```
 
----
+Run frontend locally:
 
-## Environment variables (selection)
+```bash
+cd frontend
+npm install
+node ./node_modules/next/dist/bin/next dev
+```
 
-| Variable | Description | Typical default (compose) |
-|----------|-------------|-----------------------------|
-| `ORCHESTRATOR_URL` | Gateway → orchestrator | `http://orchestrator:8010` |
-| `PII_SERVICE_URL` | Orchestrator → PII | `http://pii-service:8020` |
-| `NER_SERVICE_URL` | Orchestrator → NER | `http://ner-service:8030` |
-| `RETRIEVAL_SERVICE_URL` | Orchestrator → retrieval | `http://retrieval-service:8040` |
-| `SCORING_SERVICE_URL` | Orchestrator → scoring | `http://scoring-service:8050` |
-| `LLM_BASE_URL` | Orchestrator → LLM | `http://llm-service:8060` |
-| `LLM_MODEL_NAME` | Model label / cache keys | `Qwen/Qwen2.5-7B-Instruct` |
-| `QDRANT_HOST` / `QDRANT_PORT` | Qdrant | `qdrant` / `6333` |
-| `ORCHESTRATOR_AGENT_MODE` | `true` / `1` enables multi-step agent after relevance gate | `false` |
-| `ORCHESTRATOR_CACHE_ENABLED` | Redis caching for orchestrator | often `false` locally |
-| `REDIS_URL` or `REDIS_HOST` | Cache backend | compose sets `redis` |
-| `RETRIEVAL_URL` | Used by scripts hitting retrieval locally | `http://localhost:8040` |
+Open:
 
-See `.env.example` for the full list.
+- `http://localhost:3000`
+- `http://localhost:3000/ask`
 
----
+## Key environment flags
 
-## Development
+| Variable | Default | Notes |
+|---|---|---|
+| `ORCHESTRATOR_SUPERVISOR_PIPELINE` | `false` | Enables `SupervisorCoordinator` pipeline branch. |
+| `ORCHESTRATOR_AGENT_DEBUG` | `false` | Adds richer agent step logging in supervised mode. |
+| `ORCHESTRATOR_AGENT_MODE` | `false` | Enables internal agent-runtime synthesis on legacy path. |
+| `ORCHESTRATOR_CACHE_ENABLED` | `false` | Enables Redis caching in orchestrator. |
+| `SCORING_ALLOW_MOCK_MODEL` | `true` | Allows scoring startup with deterministic mock model if artifact missing. |
 
-### Dependencies
+Service URL defaults used by orchestrator:
+
+- `PII_SERVICE_URL=http://pii-service:8020`
+- `NER_SERVICE_URL=http://ner-service:8030`
+- `RETRIEVAL_SERVICE_URL=http://retrieval-service:8040`
+- `SCORING_SERVICE_URL=http://scoring-service:8050`
+- `LLM_BASE_URL=http://llm-service:8060`
+
+## Infra note
+
+Infrastructure currently runs from root `docker-compose.yml`.
+The `infra/` directory is reserved for future IaC and ops assets (compose overlays, Grafana, Prometheus, provisioning).
+
+## Development and tests
 
 ```bash
 uv sync
-```
-
-### Tests
-
-```bash
 make test
 ```
 
-Runs `services/shared/tests` and each service’s `tests/` with the correct `PYTHONPATH`. Example single service:
+Single-service example:
 
 ```bash
-cd services/orchestrator && uv sync && PYTHONPATH=$(pwd)/../.. uv run pytest tests -v --tb=short
+cd services/orchestrator
+uv sync
+PYTHONPATH=$(pwd)/../.. uv run pytest tests -v --tb=short
 ```
 
----
+## References
 
-## API modes
-
-- Request **`mode`**: `strict` or `hybrid` (forwarded per contract).
-- Retrieval is grounded on the **ingested Qdrant corpus** unless you extend hybrid behavior; document any deployment-specific hybrid setup in `docs/architecture.md`.
+- `docs/architecture.md`
+- `docs/api_contracts.md`
+- `docs/roadmap.md`
+- `docs/implementation_plan.md`
