@@ -27,25 +27,40 @@ Stateful dependencies in compose:
 - `redis` (`6379`)
 - `qdrant` (`6333`)
 
+## Agents (orchestrator)
+
+The orchestrator implements a **multi-agent clinical pipeline**: each step is a specialist with a bounded number of outbound calls, uniform results (`AgentResult`), and a **hard cap on supervisor transitions** (`MAX_WORKFLOW_STEPS_V1` in `services/orchestrator/app/agents/base.py`) so runs cannot recurse or loop indefinitely.
+
+### Supervised pipeline (recommended)
+
+When `ORCHESTRATOR_SUPERVISOR_PIPELINE=true`, `POST /v1/ask` is routed through `services/orchestrator/app/agent_pipeline.py`, which calls **`SupervisorCoordinator.run()`** in `services/orchestrator/app/agents/coordinator.py`. That coordinator **dispatches sub-agents in a fixed order**, aggregates their outputs, and returns a final answer mapped to `AskResponse`. Steps are logged with `trace_id`; set `ORCHESTRATOR_AGENT_DEBUG=true` or pass `user_context.debug` / `user_context.agent_debug` for richer per-step trace metadata.
+
+Typical step sequence:
+
+1. **Structuring** — `clinical_structuring`, `clinical_structuring_agent` (`clinical_structuring.py`)
+2. **Retrieval** — `retrieval`, `retrieval_agent` (`retrieval.py`, `retrieval_agent.py`)
+3. **Scoring** — `scoring` (`scoring_agent.py`)
+4. **Evidence critic** — `evidence_critic` (`evidence_critic.py`)
+5. **Safety** — `safety` (`safety_agent.py`)
+6. **Synthesis** — `synthesis` (`synthesis.py`, `synthesis_agent.py`)
+
+Shared types and context: `services/orchestrator/app/agents/base.py` (`SupervisorContext`, `AgentRole`, `AgentResult`, optional retrieval cache port).
+
+### Framework package (optional async coordinator)
+
+`services/orchestrator/agents/` holds a small **framework layer** (e.g. coordinator primitives and typed requests) that can be used alongside or instead of the clinical `SupervisorCoordinator`, depending on how you wire dispatch.
+
+### Legacy path: LangGraph-style agent runtime (not the supervised coordinator)
+
+When `ORCHESTRATOR_SUPERVISOR_PIPELINE=false` and `ORCHESTRATOR_AGENT_MODE=true`, the legacy flow uses linear chained nodes at the orchestrator package root: `agent_runtime.py`, `agent_nodes.py`, `agent_state.py` (selector → draft → verify → finalize). That is **separate** from the supervised `app/agents/*` coordinator pipeline above.
+
 ## Orchestrator behavior (as of now)
 
-`POST /v1/ask` in `services/orchestrator/app/main.py` supports two internal paths:
+`POST /v1/ask` in `services/orchestrator/app/main.py` supports two internal paths (agent layout is described in **Agents** above):
 
-1. **Supervised multi-agent pipeline** (`ORCHESTRATOR_SUPERVISOR_PIPELINE=true`)
-   - Runs `SupervisorCoordinator.run()` with bounded deterministic steps:
-     - clinical structuring
-     - retrieval + scoring
-     - relevance gate
-     - evidence critic
-     - safety
-     - synthesis
-   - Includes step logging with `trace_id`
-   - Supports debug metadata via `ORCHESTRATOR_AGENT_DEBUG=true` or `user_context.debug`
-   - Enforces max step budget (`MAX_WORKFLOW_STEPS_V1`) to prevent loops
+1. **Supervised multi-agent pipeline** (`ORCHESTRATOR_SUPERVISOR_PIPELINE=true`) — `agent_pipeline.py` → `SupervisorCoordinator` → sub-agents → aggregated `AskResponse`; step logging + debug flags as in **Agents**.
 
-2. **Legacy orchestrator path** (`ORCHESTRATOR_SUPERVISOR_PIPELINE=false`)
-   - PII -> NER -> retrieval + scoring -> relevance gate -> answer generation
-   - Optional internal agent runtime controlled by `ORCHESTRATOR_AGENT_MODE`
+2. **Legacy orchestrator path** (`ORCHESTRATOR_SUPERVISOR_PIPELINE=false`) — explicit PII/NER/retrieval/scoring/LLM sequence in `main.py`; optional `ORCHESTRATOR_AGENT_MODE` multi-node runtime (separate from supervised agents).
 
 Response contract remains `AskResponse` (includes `answer`, `sources`, `entities`, `risk`, `warnings`, `citations`, timings).
 

@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: setup up init down build rebuild lock logs ps health reset test ingest all-ingest base-image all ci frontend-install frontend-dev frontend
+.PHONY: setup up init down build rebuild lock logs ps health reset test ingest ingest-qdrant all-ingest base-image all ci frontend-install frontend-dev frontend build-backend build-frontend build-all datamix deploy-full deploy-full-no-ingest deploy-backend deploy-frontend
 
 SERVICES := gateway-api orchestrator pii-service ner-service retrieval-service scoring-service llm-service
 
@@ -60,17 +60,13 @@ test:
 		(cd services/$$svc && uv sync && PYTHONPATH=$$(pwd)/../.. uv run pytest tests -v --tb=short); \
 	done
 
-# Full retrieval index: download sources, parse to JSONL, merge datamix, embed into Qdrant.
-# Requires Qdrant reachable at http://localhost:6333 (e.g. docker compose up qdrant).
-# DailyMed/MedlinePlus downloads are large and slow; optional interim file: data/interim/synthetic.jsonl
-ingest: setup
-	set -euo pipefail; \
-	uv run python scripts/download_medlineplus.py; \
-	uv run python scripts/download_dailymed.py; \
-	uv run python scripts/parse_medlineplus.py; \
-	uv run python scripts/parse_dailymed.py; \
-	uv run python scripts/make_datamix.py; \
+# Embed pre-built datamix into Qdrant only.
+ingest-qdrant: setup
 	uv run python scripts/ingest_qdrant.py
+
+# Full retrieval index: build datamix then ingest into Qdrant.
+# Requires Qdrant reachable at http://localhost:6333 (e.g. docker compose up qdrant).
+ingest: datamix ingest-qdrant
 
 # Docker-first build path (no local tests)
 all: lock base-image build
@@ -89,4 +85,40 @@ frontend-dev:
 	cd frontend && npm run dev
 
 frontend: frontend-install frontend-dev
+
+# Build backend service images only (plus base image).
+build-backend: lock base-image
+	docker compose build $(SERVICES)
+
+# Build frontend image only.
+build-frontend:
+	docker compose build frontend
+
+# Build all app images (backend + frontend).
+build-all: build-backend build-frontend
+
+# Generate retrieval corpus datamix only (no embed/ingest).
+datamix: setup
+	set -euo pipefail; \
+	uv run python scripts/download_medlineplus.py; \
+	uv run python scripts/download_dailymed.py; \
+	uv run python scripts/parse_medlineplus.py; \
+	uv run python scripts/parse_dailymed.py; \
+	uv run python scripts/make_datamix.py
+
+# Deploy backend stack only.
+deploy-backend: build-backend
+	docker compose up -d postgres redis qdrant $(SERVICES)
+
+# Deploy frontend only (assumes backend/gateway is reachable).
+deploy-frontend: build-frontend
+	docker compose up -d frontend
+
+# Full deployment without ingest.
+deploy-full-no-ingest: build-all
+	docker compose up -d
+
+# Full deployment: build backend + frontend, bring up all services, create datamix, ingest into Qdrant.
+deploy-full: deploy-full-no-ingest
+	$(MAKE) ingest
 
