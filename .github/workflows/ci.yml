@@ -1,0 +1,65 @@
+# Lint, type-check, pytest, and Docker image builds.
+# Fails on syntax errors, ruff F/E issues, mypy errors in services/shared, test failures, or broken Dockerfiles.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    name: Lint, mypy, pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Sync root workspace
+        run: uv sync
+
+      - name: Ruff
+        run: uvx ruff@0.9.4 check services --output-format=github
+
+      - name: Mypy (shared contracts)
+        run: uvx mypy==1.15.0 --config-file mypy.ini
+
+      - name: Run all service tests
+        run: make test
+
+  docker-build:
+    name: Docker Compose build
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Prepare environment file
+        run: cp .env.example .env
+
+      - name: Refresh uv locks for images
+        run: make lock
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build all Compose images
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: docker compose build
