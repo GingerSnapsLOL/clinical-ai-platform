@@ -8,7 +8,7 @@ export function EntitiesPanel({ entities }: { entities: EntityItem[] }) {
           {entities.map((entity, index) => (
             <div key={`${entity.text}-${index}`} className="rounded-full border border-gray-300 bg-gray-50 px-3 py-1 text-xs">
               <span className="font-medium">{entity.text}</span>
-              <span className="ml-2 text-gray-500">{entity.label}</span>
+              <span className="ml-2 text-gray-500">{entity.type}</span>
             </div>
           ))}
         </div>

@@ -178,7 +178,7 @@ export default function ChatPage() {
                         <div className="space-y-2">
                           {msg.sources.map((source, index) => (
                             <div
-                              key={source.id ?? `${source.title}-${index}`}
+                              key={source.source_id ?? `${source.title}-${index}`}
                               className="rounded-lg border border-slate-200 bg-white/60 p-3"
                             >
                               <div className="text-sm font-semibold text-slate-900">

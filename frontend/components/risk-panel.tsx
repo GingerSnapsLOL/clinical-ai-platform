@@ -1,55 +1,73 @@
-import type { RiskAssessment } from "@/lib/types";
+import type { RiskBlock } from "@/lib/types";
 import { DashboardCard } from "@/components/dashboard-card";
 
-const riskToneClass: Record<NonNullable<RiskAssessment["level"]>, string> = {
+const riskToneClass: Record<"low" | "medium" | "high", string> = {
   low: "border border-green-200 bg-green-50 text-green-800",
   medium: "border border-amber-200 bg-amber-50 text-amber-800",
   high: "border border-red-200 bg-red-50 text-red-800",
-  unknown: "border border-gray-200 bg-gray-50 text-gray-700",
 };
 
-const riskLabel: Record<NonNullable<RiskAssessment["level"]>, string> = {
+const riskLabel: Record<"low" | "medium" | "high", string> = {
   low: "Low Risk",
   medium: "Medium Risk",
   high: "High Risk",
-  unknown: "Unknown Risk",
 };
 
-export function RiskPanel({ risk }: { risk?: RiskAssessment }) {
-  const level: NonNullable<RiskAssessment["level"]> = risk?.level ?? "unknown";
-  const details: string[] = [];
-
-  if (risk?.rationale) details.push(risk.rationale);
-  if (risk?.recommendations?.length) details.push(...risk.recommendations);
-
+export function RiskPanel({
+  riskBlock,
+  devMode = false,
+}: {
+  riskBlock?: RiskBlock | null;
+  devMode?: boolean;
+}) {
   return (
     <DashboardCard title="Risk Assessment">
-      {!risk ? (
-        <p className="text-sm text-gray-600">No risk assessment yet.</p>
+      {!riskBlock || riskBlock.risk_available === false ? (
+        <p className="text-sm text-gray-600">
+          {riskBlock?.rationale || "Risk assessment unavailable (insufficient data)"}
+        </p>
+      ) : !riskBlock.label ? (
+        <p className="text-sm text-gray-600">Risk assessment unavailable (insufficient data)</p>
       ) : (
         <>
-          <span
-            className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${riskToneClass[level]}`}
-          >
-            {riskLabel[level]}
-          </span>
-
-          <div className="mt-3">
-            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-gray-500">
-              Explanation
+          {typeof riskBlock.score === "number" && (
+            <p className="text-xs text-gray-600">
+              Score: <span className="font-mono font-medium">{riskBlock.score.toFixed(3)}</span>
             </p>
-            {details.length > 0 ? (
-              <ul className="list-disc space-y-1 pl-5 text-sm text-gray-700">
-                {details.map((item, index) => (
-                  <li key={`${item}-${index}`}>{item}</li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-gray-600">
-                No structured explanation provided.
+          )}
+          <span
+            className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${riskToneClass[riskBlock.label]}`}
+          >
+            {riskLabel[riskBlock.label]}
+          </span>
+          {typeof riskBlock.confidence === "number" && (
+            <p className="mt-2 text-xs text-gray-600">
+              Confidence:{" "}
+              <span className="font-mono font-medium">{riskBlock.confidence.toFixed(2)}</span>
+            </p>
+          )}
+          {riskBlock.rationale && (
+            <p className="mt-2 text-sm text-gray-700">{riskBlock.rationale}</p>
+          )}
+
+          {(devMode || (riskBlock.explanation && riskBlock.explanation.length > 0)) && (
+            <div className="mt-3">
+              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-gray-500">
+                Explanation
               </p>
-            )}
-          </div>
+              {riskBlock.explanation && riskBlock.explanation.length > 0 ? (
+                <ul className="list-disc space-y-1 pl-5 text-sm text-gray-700">
+                  {riskBlock.explanation.map((feat, index) => (
+                    <li key={`${feat.feature}-${index}`}>
+                      {feat.feature}: {feat.contribution.toFixed(4)}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-gray-600">No structured explanation provided.</p>
+              )}
+            </div>
+          )}
         </>
       )}
     </DashboardCard>

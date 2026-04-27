@@ -9,7 +9,7 @@ type DashboardCardProps = {
 export function DashboardCard({ title, children, className }: DashboardCardProps) {
   return (
     <section className={`dashboard-card ${className ?? ""}`.trim()}>
-      <h2 className="mb-3 text-lg font-semibold tracking-tight text-slate-900">{title}</h2>
+      <h2 className="mb-3 text-lg font-semibold tracking-tight text-slate-800">{title}</h2>
       {children}
     </section>
   );

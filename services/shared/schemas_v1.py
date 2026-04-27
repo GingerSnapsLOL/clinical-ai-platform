@@ -7,15 +7,18 @@ pii, ner, retrieval, and scoring services.
 """
 from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional
-from pydantic import BaseModel, Field, HttpUrl
+
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl
 
 Mode = Literal["strict", "hybrid"]
 Status = Literal["ok", "error"]
 
 # Re-export for typed contracts used by all services
 __all__ = [
+    "AskDiagnostics",
     "AskRequest",
     "AskResponse",
+    "Citation",
     "CitationItem",
     "EntityItem",
     "ErrorInfo",
@@ -33,8 +36,9 @@ __all__ = [
     "RiskBlock",
     "ScoreRequest",
     "ScoreResponse",
-    "TargetScoreResult",
+    "Source",
     "SourceItem",
+    "TargetScoreResult",
     "Status",
 ]
 
@@ -60,7 +64,9 @@ class AskRequest(BaseModel):
     question: str
     user_context: Optional[Dict[str, Any]] = None
 
-class SourceItem(BaseModel):
+class Source(BaseModel):
+    """Evidence passage / retrieval hit attached to an ask response."""
+
     source_id: str
     title: Optional[str] = None
     url: Optional[HttpUrl] = None
@@ -69,10 +75,48 @@ class SourceItem(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
-class CitationItem(BaseModel):
+class Citation(BaseModel):
+    """Compact reference to a source used in the answer."""
+
     source_id: str
     title: Optional[str] = None
     url: Optional[HttpUrl] = None
+
+
+# Backward-compatible aliases (orchestrator and tests historically used *Item names).
+SourceItem = Source
+CitationItem = Citation
+
+
+class AskDiagnostics(BaseModel):
+    """Latency and pipeline telemetry for POST /v1/ask (optional on minimal responses)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    total_request_time_ms: Optional[float] = Field(
+        default=None,
+        description="End-to-end ask duration including downstream services.",
+    )
+    retrieval_time_ms: Optional[float] = Field(
+        default=None,
+        description="Retrieval-service (or retrieval agent) duration when applicable.",
+    )
+    llm_time_ms: Optional[float] = Field(
+        default=None,
+        description="LLM or synthesis-agent duration when applicable.",
+    )
+    timings: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Additional step timings and numeric flags (ms or unitless scores).",
+    )
+    retrieval_diagnostics: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Retrieval subsystem diagnostics when the pipeline attaches them.",
+    )
+    planner_decisions: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Planner / tool-routing decisions when hybrid tooling is enabled.",
+    )
 
 class EntityItem(BaseModel):
     type: str
@@ -86,25 +130,38 @@ class FeatureContribution(BaseModel):
     contribution: float
 
 class RiskBlock(BaseModel):
-    score: float
-    label: Literal["low", "medium", "high"]
+    score: Optional[float] = None
+    label: Optional[Literal["low", "medium", "high"]] = None
     explanation: List[FeatureContribution] = []
+    risk_available: bool = True
+    confidence: Optional[float] = None
+    rationale: Optional[str] = None
 
 class AskResponse(BaseModel):
+    """Unified response for POST /v1/ask (gateway and orchestrator)."""
+
+    model_config = ConfigDict(extra="ignore")
+
     status: Status = "ok"
     trace_id: str
     pii_redacted: bool = True
-    answer: str
-    sources: List[SourceItem] = []
-    entities: List[EntityItem] = []
-    risk: Optional[RiskBlock] = None
-    warnings: List[str] = []
-    citations: List[CitationItem] = []
-    # Latency timings (populated by orchestrator; optional for backward compat)
-    total_request_time_ms: Optional[float] = None
-    retrieval_time_ms: Optional[float] = None
-    llm_time_ms: Optional[float] = None
-    timings: Optional[Dict[str, float]] = None
+    answer: str = ""
+    sources: List[Source] = Field(default_factory=list)
+    citations: List[Citation] = Field(default_factory=list)
+    entities: Optional[List[EntityItem]] = Field(
+        default=None,
+        description="NER entities when extraction ran; omitted when null.",
+    )
+    risk_block: Optional[RiskBlock] = Field(
+        default=None,
+        validation_alias=AliasChoices("risk_block", "risk"),
+        description="Primary risk summary from scoring when available.",
+    )
+    diagnostics: Optional[AskDiagnostics] = Field(
+        default=None,
+        description="Latency and pipeline telemetry.",
+    )
+    warnings: List[str] = Field(default_factory=list)
     error: Optional[ErrorInfo] = None
 
 # -------------------------
@@ -193,14 +250,32 @@ class ScoreRequest(BaseModel):
     )
 
 
+ScoreLabel = Literal["low", "medium", "high", "insufficient_data"]
+
+
 class ScoreResponse(BaseModel):
     status: Status = "ok"
     trace_id: str
     score: float
-    label: Literal["low", "medium", "high"]
-    explanation: List[FeatureContribution] = []
+    label: ScoreLabel
+    explanation: str = Field(
+        default="",
+        description="Human-readable scoring rationale (deterministic rules, not ML).",
+    )
+    contributions: List[FeatureContribution] = Field(
+        default_factory=list,
+        description="Optional structured feature rows backing the label.",
+    )
     target_results: Optional[Dict[str, TargetScoreResult]] = Field(
         default=None,
         description="Populated when the client explicitly requests `targets`.",
     )
     error: Optional[ErrorInfo] = None
+    risk_available: bool = Field(
+        default=True,
+        description="False when no usable input; label should be insufficient_data.",
+    )
+    confidence: Optional[float] = Field(
+        default=None,
+        description="Confidence in [0, 1] when risk_available.",
+    )

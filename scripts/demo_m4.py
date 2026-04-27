@@ -41,7 +41,7 @@ def pretty_print_ask_response(data: dict) -> None:
             )
 
     print("\n=== RISK ===")
-    risk = data.get("risk")
+    risk = data.get("risk_block") or data.get("risk")
     if not risk:
         print("(none)")
     else:

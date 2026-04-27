@@ -135,8 +135,11 @@ def test_feature_flag_disabled_single_llm_path(monkeypatch):
 
     tid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
+    called_models: list[str] = []
+
     async def fake_post_typed(client, url, request_body, response_model, timeout=None, trace_id=None):
         name = response_model.__name__
+        called_models.append(name)
         if name == "RedactResponse":
             return RedactResponse(trace_id=tid, redacted_text=request_body.text), None, None
         if name == "ExtractResponse":
@@ -157,7 +160,17 @@ def test_feature_flag_disabled_single_llm_path(monkeypatch):
                 None,
             )
         if name == "ScoreResponse":
-            return ScoreResponse(trace_id=tid, score=0.2, label="low", explanation=[]), None, None
+            return (
+                ScoreResponse(
+                    trace_id=tid,
+                    score=0.2,
+                    label="low",
+                    explanation="",
+                    contributions=[],
+                ),
+                None,
+                None,
+            )
         raise AssertionError(f"unexpected response_model {name}")
 
     llm_instance = MagicMock()
@@ -169,6 +182,8 @@ def test_feature_flag_disabled_single_llm_path(monkeypatch):
     llm_instance.aclose = AsyncMock()
 
     monkeypatch.setattr(main_module, "post_typed", fake_post_typed)
+    trace_store_mock = AsyncMock(return_value=(True, None))
+    monkeypatch.setattr(main_module, "save_request_trace", trace_store_mock)
     monkeypatch.setenv("LLM_BASE_URL", "http://mock-llm")
 
     with patch.object(main_module, "LLMClient", return_value=llm_instance):
@@ -180,12 +195,19 @@ def test_feature_flag_disabled_single_llm_path(monkeypatch):
                 "mode": "strict",
                 "note_text": "Patient has hypertension.",
                 "question": "What is the plan?",
+                "user_context": {"debug": True},
             },
         )
 
     assert r.status_code == 200
     data = r.json()
     assert data["answer"] == "Single-call LLM answer body."
+    trace_store_mock.assert_awaited_once()
+    assert ((data.get("diagnostics") or {}).get("trace_storage") or {}).get("saved") is True
     llm_instance.generate.assert_awaited_once()
-    timing_keys = set((data.get("timings") or {}).keys())
+    assert "ScoreResponse" not in called_models
+    scoring_diag = (data.get("diagnostics") or {}).get("scoring_diagnostics") or {}
+    assert scoring_diag.get("skipped") is True
+    assert scoring_diag.get("skip_reason") == "no_relevant_entities"
+    timing_keys = set((data.get("diagnostics") or {}).get("timings", {}).keys())
     assert "agent_total_duration_ms" not in timing_keys

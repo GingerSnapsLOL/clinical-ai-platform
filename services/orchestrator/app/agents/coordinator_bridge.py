@@ -106,7 +106,11 @@ def create_clinical_coordinator_dispatch(ctx: SupervisorContext):
             ent_raw = state.get("entities") or []
             entities = [EntityItem.model_validate(e) for e in ent_raw]
             risk_block: RiskBlock | None = None
-            if "score" in state and "label" in state:
+            if (
+                "score" in state
+                and "label" in state
+                and state.get("label") != "insufficient_data"
+            ):
                 risk_block = RiskBlock(
                     score=float(state["score"]),
                     label=str(state["label"]),

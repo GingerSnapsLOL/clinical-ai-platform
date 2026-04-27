@@ -1,14 +1,16 @@
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import UUID, uuid4
 
 import httpx
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from starlette.requests import Request
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from services.shared.http_client import create_client, get_timeout, post_typed
+from services.shared.http_client import create_client, get_timeout, post_json
 from services.shared.logging_util import get_logger, set_trace_id, structured_log_middleware
 from services.shared.schemas_v1 import (
     AskRequest,
@@ -30,6 +32,37 @@ def get_cors_origins() -> List[str]:
 def _get_orchestrator_url() -> str:
     url = os.getenv("ORCHESTRATOR_URL") or "http://orchestrator:8010"
     return url.strip().rstrip("/")
+
+
+def _expose_ask_validation_details() -> bool:
+    """When true, HTTP 500 validation failures include Pydantic error payloads (dev only)."""
+    return os.getenv("GATEWAY_EXPOSE_ASK_VALIDATION_DETAILS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _ask_validation_error_response(
+    trace_id: str,
+    *,
+    code: str,
+    message: str,
+    details: Optional[Dict[str, Any]] = None,
+) -> JSONResponse:
+    body = AskResponse(
+        status="error",
+        trace_id=trace_id,
+        pii_redacted=False,
+        answer="",
+        warnings=[message],
+        error=ErrorInfo(code=code, message=message, details=details),
+    )
+    return JSONResponse(
+        status_code=500,
+        content=body.model_dump(mode="json", exclude_none=True),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +160,12 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(RequestValidationError)
+async def request_validation_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Return 400 for malformed /v1/ask bodies (tests and clients expect 400, not 422)."""
+    return JSONResponse(status_code=400, content={"detail": exc.errors()})
+
+
 @app.on_event("startup")
 async def startup() -> None:
     orchestrator_url = _get_orchestrator_url()
@@ -167,11 +206,31 @@ async def health() -> HealthResponse:
     return HealthResponse(service="gateway-api")
 
 
-@app.post("/v1/ask", response_model=AskResponse)
-async def ask(request: AskRequestIn) -> AskResponse:
+@app.post(
+    "/v1/ask",
+    response_model=AskResponse,
+    response_model_exclude_none=True,
+    responses={
+        400: {
+            "description": "Invalid request body (validation failed)",
+        },
+        500: {
+            "description": "Orchestrator returned 200 but body failed AskResponse validation (schema drift)",
+            "model": AskResponse,
+        },
+        502: {
+            "description": "Orchestrator unreachable or returned an error payload",
+            "model": AskResponse,
+        },
+    },
+)
+async def ask(request: AskRequestIn) -> Union[AskResponse, JSONResponse]:
     """
     Accept AskRequest-like input (trace_id optional), generate trace_id if missing,
     forward to orchestrator via httpx, return AskResponse.
+
+    Orchestrator JSON is always validated with ``AskResponse.model_validate`` so
+    contract drift cannot pass through silently.
     """
     trace_id = request.trace_id if request.trace_id else str(uuid4())
     set_trace_id(trace_id)
@@ -189,27 +248,86 @@ async def ask(request: AskRequestIn) -> AskResponse:
     timeout = get_timeout()
 
     async with create_client(timeout=timeout) as client:
-        result, resp, exc = await post_typed(
+        data, resp, exc = await post_json(
             client,
             url,
             internal_request,
-            AskResponse,
             timeout=timeout,
             trace_id=trace_id,
         )
 
-    if result is not None:
-        return result
+    # Network failure: no HTTP response
+    if exc is not None and resp is None:
+        status_code, error_info = _map_error(exc, None)
+        error_body = AskResponse(
+            status="error",
+            trace_id=trace_id,
+            pii_redacted=False,
+            answer="",
+            warnings=[error_info.message],
+            error=error_info,
+        )
+        return JSONResponse(
+            status_code=status_code,
+            content=error_body.model_dump(mode="json", exclude_none=True),
+        )
 
-    status_code, error_info = _map_error(exc, resp)
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "status": "error",
-            "trace_id": trace_id,
-            "error": error_info.model_dump(),
-        },
-    )
+    # Non-200 from orchestrator
+    if resp is not None and resp.status_code != 200:
+        status_code, error_info = _map_error(None, resp)
+        error_body = AskResponse(
+            status="error",
+            trace_id=trace_id,
+            pii_redacted=False,
+            answer="",
+            warnings=[error_info.message],
+            error=error_info,
+        )
+        return JSONResponse(
+            status_code=status_code,
+            content=error_body.model_dump(mode="json", exclude_none=True),
+        )
+
+    # 200 but body is not valid JSON
+    if exc is not None:
+        logger.error(
+            "gateway_ask_orchestrator_json_decode_failed",
+            extra={"trace_id": trace_id, "error": str(exc), "error_type": type(exc).__name__},
+        )
+        decode_details: Optional[Dict[str, Any]] = None
+        if _expose_ask_validation_details():
+            decode_details = {"reason": str(exc), "type": type(exc).__name__}
+        return _ask_validation_error_response(
+            trace_id,
+            code="GATEWAY_ORCHESTRATOR_JSON_INVALID",
+            message="Orchestrator returned 200 with a non-JSON or invalid JSON body",
+            details=decode_details,
+        )
+
+    assert data is not None
+
+    try:
+        validated = AskResponse.model_validate(data)
+    except ValidationError as e:
+        logger.error(
+            "gateway_ask_response_validation_failed",
+            extra={
+                "trace_id": trace_id,
+                "error": str(e),
+                "pydantic_errors": e.errors(),
+            },
+        )
+        details: Optional[Dict[str, Any]] = None
+        if _expose_ask_validation_details():
+            details = {"validation_errors": e.errors()}
+        return _ask_validation_error_response(
+            trace_id,
+            code="GATEWAY_RESPONSE_VALIDATION_ERROR",
+            message="Orchestrator response failed AskResponse validation",
+            details=details,
+        )
+
+    return validated
 
 
 if __name__ == "__main__":

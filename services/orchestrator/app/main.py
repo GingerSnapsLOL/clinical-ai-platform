@@ -28,7 +28,8 @@ from app.note_query import (
 )
 from app.agents.base import SupervisorContext
 from app.agents.clinical_structuring_agent import ClinicalStructuringAgent
-from app.agents.scoring_agent import run_scoring_step
+from app.agents.scoring_agent import ScoringAgent, run_scoring_step
+from app.trace_store import save_request_trace
 from app.prompts.llm_ask import build_llm_prompt
 from app.agent_pipeline import agent_pipeline_debug, run_supervised_ask, supervisor_pipeline_enabled
 from app.relevance import retrieval_meets_relevance_bar
@@ -43,6 +44,7 @@ except Exception:  # pragma: no cover
 
 logger = get_logger(__name__, "orchestrator")
 from services.shared.schemas_v1 import (
+    AskDiagnostics,
     AskRequest,
     AskResponse,
     CitationItem,
@@ -200,13 +202,17 @@ def _synthesize_answer(question: str, sources: List[SourceItem], risk: RiskBlock
 
     # Key risks: use scoring-service label/score when available
     risk_lines: List[str] = []
-    if risk is not None:
+    if risk is not None and risk.risk_available and risk.label is not None and risk.score is not None:
         risk_lines.append(f"Overall risk is **{risk.label}** (score {risk.score:.2f}).")
+        if risk.confidence is not None:
+            risk_lines.append(f"Model confidence is {risk.confidence:.2f}.")
+        if risk.rationale:
+            risk_lines.append(risk.rationale)
         if risk.explanation:
             top_feats = ", ".join(feat.feature for feat in risk.explanation[:3])
             risk_lines.append(f"Top contributing factors include: {top_feats}.")
     else:
-        risk_lines.append("Risk score is not available for this case.")
+        risk_lines.append("Risk assessment unavailable (insufficient data).")
 
     # Recommended monitoring: heuristic text based on common cardiometabolic patterns
     monitoring_lines: List[str] = [
@@ -224,17 +230,6 @@ def _synthesize_answer(question: str, sources: List[SourceItem], risk: RiskBlock
     return answer
 
 
-def _stub_risk() -> RiskBlock:
-    return RiskBlock(
-        score=0.72,
-        label="high",
-        explanation=[
-            FeatureContribution(feature="bp_high", contribution=0.18),
-            FeatureContribution(feature="age_bucket_60_70", contribution=0.12),
-        ],
-    )
-
-
 app = FastAPI(title="Clinical AI Orchestrator", version="0.1.0")
 app.add_middleware(structured_log_middleware("orchestrator"))
 
@@ -244,7 +239,11 @@ async def health() -> HealthResponse:
     return HealthResponse(service="orchestrator")
 
 
-@app.post("/v1/ask", response_model=AskResponse)
+@app.post(
+    "/v1/ask",
+    response_model=AskResponse,
+    response_model_exclude_none=True,
+)
 async def ask(request: AskRequest) -> AskResponse:
     """
     Call services in order, parallelizing independent stages where safe:
@@ -260,6 +259,7 @@ async def ask(request: AskRequest) -> AskResponse:
     Returns: answer, entities, sources, risk, trace_id (and pii_redacted).
     """
     trace_id = request.trace_id
+    debug_enabled = agent_pipeline_debug(request)
     set_trace_id(trace_id)
     t_request_start = time.perf_counter()
     timeout = get_timeout()
@@ -267,18 +267,33 @@ async def ask(request: AskRequest) -> AskResponse:
     if supervisor_pipeline_enabled():
         logger.info(
             "supervised_pipeline_branch",
-            extra={"trace_id": trace_id, "debug": agent_pipeline_debug(request)},
+            extra={"trace_id": trace_id, "debug": debug_enabled},
         )
         async with create_client(timeout=timeout) as client:
             cache = _OrchestratorRetrievalCache() if _cache_enabled() else None
-            return await run_supervised_ask(
+            resp = await run_supervised_ask(
                 request,
                 client,
                 timeout,
                 retrieval_cache=cache,
-                debug=agent_pipeline_debug(request),
+                debug=debug_enabled,
                 t_request_start=t_request_start,
             )
+            src_rows = [s.model_dump(mode="json") for s in (resp.sources or [])]
+            ok, err = await save_request_trace(
+                trace_id=trace_id,
+                query=request.question,
+                mode=request.mode,
+                answer=resp.answer,
+                sources=src_rows,
+                warnings=list(resp.warnings or []),
+            )
+            if not ok and err != "trace_db_disabled":
+                if resp.diagnostics is not None:
+                    resp.diagnostics.trace_storage = {"saved": False, "error": err}
+            elif resp.diagnostics is not None:
+                resp.diagnostics.trace_storage = {"saved": ok}
+            return resp
 
     agent_mode_flag = _agent_mode_enabled()
     logger.info(
@@ -308,8 +323,14 @@ async def ask(request: AskRequest) -> AskResponse:
     structuring_signals: dict[str, Any] = {}
     # 3) Retrieval (sources from retrieval-service only)
     sources: List[SourceItem] = []
-    # 4) Scoring (uses entities from NER)
-    risk = _stub_risk()
+    # 4) Scoring (optional; uses clinically relevant entities from NER)
+    risk: RiskBlock | None = None
+    scoring_diagnostics: dict[str, Any] = {
+        "attempted": False,
+        "skipped": False,
+        "failed": False,
+        "warnings": [],
+    }
 
     async with create_client(timeout=timeout) as client:
         # 1) pii-service /v1/redact (trace_id in body + header)
@@ -418,6 +439,14 @@ async def ask(request: AskRequest) -> AskResponse:
 
         async def _run_scoring_agent() -> None:
             nonlocal risk, scoring_duration_ms
+            nonlocal scoring_diagnostics
+            if not ScoringAgent.has_relevant_entities(entities):
+                scoring_diagnostics["skipped"] = True
+                scoring_diagnostics["skip_reason"] = "no_relevant_entities"
+                if "scoring_skipped:no_relevant_entities" not in warnings:
+                    warnings.append("scoring_skipped:no_relevant_entities")
+                return
+
             scoring_t0 = time.perf_counter()
             ctx = SupervisorContext(
                 trace_id=trace_id,
@@ -426,12 +455,28 @@ async def ask(request: AskRequest) -> AskResponse:
                 client=client,
                 timeout=timeout,
             )
-            res = await run_scoring_step(
-                ctx,
-                list(entities),
-                structured_features=structured_features,
-                signals=structuring_signals,
-            )
+            scoring_diagnostics["attempted"] = True
+            try:
+                res = await run_scoring_step(
+                    ctx,
+                    list(entities),
+                    structured_features=structured_features,
+                    signals=structuring_signals,
+                )
+            except Exception as exc:  # pragma: no cover - defensive; scoring step already catches internal errors
+                scoring_duration_ms = (time.perf_counter() - scoring_t0) * 1000.0
+                scoring_diagnostics["failed"] = True
+                scoring_diagnostics["error"] = f"{type(exc).__name__}:{exc!s}"
+                diag_warning = "scoring_failed:exception"
+                scoring_diagnostics["warnings"] = [diag_warning]
+                if diag_warning not in warnings:
+                    warnings.append(diag_warning)
+                logger.warning(
+                    "scoring_step_exception",
+                    extra={"trace_id": trace_id, "error": str(exc)},
+                )
+                return
+
             scoring_duration_ms = res.duration_ms
             logger.info(
                 "latency_scoring_service",
@@ -440,13 +485,35 @@ async def ask(request: AskRequest) -> AskResponse:
             for w in res.warnings:
                 if w not in warnings:
                     warnings.append(w)
+            scoring_diagnostics["warnings"] = list(res.warnings)
+            if not res.ok:
+                scoring_diagnostics["failed"] = True
+                scoring_diagnostics["error"] = res.error_detail or "scoring_failed"
+                diag_warning = "scoring_failed:service_error"
+                if diag_warning not in warnings:
+                    warnings.append(diag_warning)
             if res.ok and res.payload:
-                expl = res.payload.get("explanation") or []
-                risk = RiskBlock(
-                    score=float(res.payload["score"]),
-                    label=res.payload["label"],
-                    explanation=[FeatureContribution.model_validate(x) for x in expl],
-                )
+                if (not bool(res.payload.get("risk_available", True))) or (
+                    res.payload.get("label") == "insufficient_data"
+                ):
+                    risk = RiskBlock(
+                        risk_available=False,
+                        confidence=res.payload.get("confidence"),
+                        rationale=(
+                            res.payload.get("risk_narrative")
+                            or "Risk assessment unavailable (insufficient data)"
+                        ),
+                    )
+                else:
+                    expl = res.payload.get("explanation") or []
+                    risk = RiskBlock(
+                        score=float(res.payload["score"]),
+                        label=res.payload["label"],
+                        explanation=[FeatureContribution.model_validate(x) for x in expl],
+                        risk_available=True,
+                        confidence=res.payload.get("confidence"),
+                        rationale=res.payload.get("risk_narrative"),
+                    )
 
         # Parallelize retrieval + scoring (independent once entities exist).
         retrieval_result, _ = await asyncio.gather(
@@ -628,6 +695,8 @@ async def ask(request: AskRequest) -> AskResponse:
                         "agent_mode": use_agent,
                     },
                 )
+                if "fallback_used:llm_answer" not in warnings:
+                    warnings.append("fallback_used:llm_answer")
                 fallback_used = True
                 fb_t0 = time.perf_counter()
                 answer = _synthesize_answer(request.question, sources, risk)
@@ -697,32 +766,52 @@ async def ask(request: AskRequest) -> AskResponse:
 
     logger.info("ask_latency_summary", extra=summary_extra)
 
-    timings_payload: dict[str, float] = {
-        "total_request_time_ms": total_duration_ms,
-        "pii_service_duration_ms": pii_duration_ms,
-        "ner_service_duration_ms": ner_duration_ms,
-        "retrieval_service_duration_ms": retrieval_duration_ms,
-        "scoring_service_duration_ms": scoring_duration_ms,
-        "llm_service_duration_ms": llm_duration_ms,
-        "fallback_synthesis_duration_ms": fallback_synthesis_duration_ms,
-    }
-    if agent_node_timings:
-        timings_payload.update(agent_node_timings)
+    diagnostics_payload: AskDiagnostics | None = None
+    if debug_enabled:
+        diagnostics_payload = AskDiagnostics(
+            total_request_time_ms=total_duration_ms,
+            retrieval_time_ms=retrieval_duration_ms,
+            llm_time_ms=llm_duration_ms,
+            timings={
+                "total_request_time_ms": total_duration_ms,
+                "pii_time_ms": pii_duration_ms,
+                "ner_time_ms": ner_duration_ms,
+                "retrieval_time_ms": retrieval_duration_ms,
+                "scoring_time_ms": scoring_duration_ms,
+                "llm_time_ms": llm_duration_ms,
+                "fallback_synthesis_time_ms": fallback_synthesis_duration_ms,
+            },
+            scoring_diagnostics=scoring_diagnostics,
+            warnings=list(warnings),
+            fallback_used=fallback_used,
+        )
 
-    return AskResponse(
+    response = AskResponse(
         trace_id=trace_id,
         pii_redacted=pii_redacted,
         answer=answer,
         entities=entities,
         sources=sources,
-        risk=risk,
+        risk_block=risk,
         citations=citations,
         warnings=warnings,
-        total_request_time_ms=total_duration_ms,
-        retrieval_time_ms=retrieval_duration_ms,
-        llm_time_ms=llm_duration_ms,
-        timings=timings_payload,
+        diagnostics=diagnostics_payload,
     )
+    src_rows = [s.model_dump(mode="json") for s in (response.sources or [])]
+    ok, err = await save_request_trace(
+        trace_id=trace_id,
+        query=request.question,
+        mode=request.mode,
+        answer=response.answer,
+        sources=src_rows,
+        warnings=list(response.warnings or []),
+    )
+    if not ok and err != "trace_db_disabled":
+        if response.diagnostics is not None:
+            response.diagnostics.trace_storage = {"saved": False, "error": err}
+    elif response.diagnostics is not None:
+        response.diagnostics.trace_storage = {"saved": ok}
+    return response
 
 
 if __name__ == "__main__":

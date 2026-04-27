@@ -45,8 +45,29 @@ def test_ask_contract():
     assert "answer" in data
     assert "entities" in data
     assert "sources" in data
-    assert "risk" in data
+    assert isinstance(data.get("risk_block"), (dict, type(None)))
+    assert data.get("diagnostics") is None
     assert "pii_redacted" in data
+
+
+def test_ask_contract_debug_includes_diagnostics():
+    r = client.post(
+        "/v1/ask",
+        json={
+            "trace_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567891",
+            "mode": "strict",
+            "note_text": "Patient with hypertension",
+            "question": "What is the risk?",
+            "user_context": {"debug": True},
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    diagnostics = data.get("diagnostics")
+    assert isinstance(diagnostics, dict)
+    assert isinstance(diagnostics.get("timings"), dict)
+    assert "warnings" in diagnostics
+    assert "fallback_used" in diagnostics
 
 
 def test_ask_llm_integration_fallback_friendly(monkeypatch):
@@ -87,7 +108,7 @@ def test_ask_llm_integration_fallback_friendly(monkeypatch):
     # Entities and risk should be present.
     entities = data.get("entities", [])
     assert isinstance(entities, list)
-    assert "risk" in data
+    assert isinstance(data.get("risk_block"), (dict, type(None)))
 
 
 def test_retrieval_meets_relevance_bar_no_passages():
@@ -181,4 +202,4 @@ def test_ask_supervised_pipeline_branch_mocked(monkeypatch):
     assert data["trace_id"] == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     assert data["answer"] == "Supervised answer"
     assert "gate:mock" in data.get("warnings", [])
-    assert data.get("timings", {}).get("supervised_pipeline_flag") == 1.0
+    assert data.get("diagnostics", {}).get("timings", {}).get("supervised_pipeline_flag") == 1.0

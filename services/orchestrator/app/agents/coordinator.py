@@ -37,7 +37,7 @@ from app.agents.clinical_structuring import run_clinical_structuring
 from app.agents.retrieval import run_retrieval
 from app.agents.evidence_critic import run_evidence_critic
 from app.agents.safety_agent import run_safety
-from app.agents.scoring_agent import run_scoring_step
+from app.agents.scoring_agent import ScoringAgent, run_scoring_step
 from app.agents.synthesis_agent import run_synthesis_answer
 from app.relevance import retrieval_meets_relevance_bar
 
@@ -99,12 +99,24 @@ class SupervisorCoordinator:
         retrieval_coro = run_retrieval(ctx, redacted_text=redacted_text, entities=entities)
         struct_features = struct.payload.get("structured_features") or {}
         signals = struct.payload.get("signals") or {}
-        scoring_coro = run_scoring_step(
-            ctx,
-            entities,
-            structured_features=struct_features,
-            signals=signals,
-        )
+        if ScoringAgent.has_relevant_entities(entities):
+            scoring_coro = run_scoring_step(
+                ctx,
+                entities,
+                structured_features=struct_features,
+                signals=signals,
+            )
+        else:
+            scoring_coro = asyncio.sleep(
+                0,
+                result=AgentResult(
+                    agent_id="scoring",
+                    ok=True,
+                    confidence=0.0,
+                    warnings=["scoring_skipped:no_relevant_entities"],
+                    payload={},
+                ),
+            )
         retrieval_res, scoring_res = await asyncio.gather(retrieval_coro, scoring_coro)
         steps.extend([retrieval_res, scoring_res])
         step_budget -= 2
@@ -113,14 +125,17 @@ class SupervisorCoordinator:
         sources = [SourceItem.model_validate(s) for s in sources_payload]
 
         risk_block: RiskBlock | None = None
-        if scoring_res.ok and scoring_res.payload:
+        pl = scoring_res.payload if scoring_res.ok else {}
+        if pl and pl.get("label") != "insufficient_data" and pl.get("risk_available", True):
             risk_block = RiskBlock(
-                score=float(scoring_res.payload["score"]),
-                label=scoring_res.payload["label"],
+                score=float(pl["score"]),
+                label=pl["label"],
                 explanation=[
-                    FeatureContribution.model_validate(x)
-                    for x in scoring_res.payload.get("explanation", [])
+                    FeatureContribution.model_validate(x) for x in pl.get("explanation", [])
                 ],
+                risk_available=True,
+                confidence=pl.get("confidence"),
+                rationale=pl.get("risk_narrative"),
             )
 
         accept, top_rel, gate_reason = retrieval_meets_relevance_bar(sources)

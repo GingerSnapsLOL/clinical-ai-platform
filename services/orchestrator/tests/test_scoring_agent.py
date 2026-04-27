@@ -38,12 +38,22 @@ def test_assess_input_quality_stronger_with_entities() -> None:
     assert not any("no_entities_or_structured" in w for w in warns)
 
 
+def test_has_relevant_entities_true_for_clinical_types() -> None:
+    ent = [EntityItem(type="SYMPTOM", text="chest pain", start=0, end=10)]
+    assert ScoringAgent.has_relevant_entities(ent) is True
+
+
+def test_has_relevant_entities_false_for_empty_list() -> None:
+    assert ScoringAgent.has_relevant_entities([]) is False
+
+
 def test_interpret_response_multi_target_ready() -> None:
     resp = ScoreResponse(
         trace_id="t1",
         score=0.4,
         label="medium",
-        explanation=[],
+        explanation="Medium triage (stub).",
+        contributions=[],
         target_results={
             "triage_severity": TargetScoreResult(
                 target="triage_severity",
@@ -53,6 +63,8 @@ def test_interpret_response_multi_target_ready() -> None:
                 ready=True,
             ),
         },
+        risk_available=True,
+        confidence=0.4,
     )
     out = ScoringAgent.interpret_response(resp, ["triage_severity"])
     assert out["ready"] is True
@@ -65,7 +77,8 @@ def test_interpret_not_ready_secondary() -> None:
         trace_id="t2",
         score=0.2,
         label="low",
-        explanation=[],
+        explanation="",
+        contributions=[],
         target_results={
             "triage_severity": TargetScoreResult(
                 target="triage_severity",

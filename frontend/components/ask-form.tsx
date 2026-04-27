@@ -38,7 +38,7 @@ export function AskForm({ onSubmit, isSubmitting }: Props) {
 
   return (
     <form
-      className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5"
+      className="space-y-5 rounded-2xl border border-slate-200/80 bg-white p-5"
       onSubmit={(e) => {
         e.preventDefault();
         if (!mode.trim() || !noteText.trim() || !question.trim()) return;
@@ -52,7 +52,7 @@ export function AskForm({ onSubmit, isSubmitting }: Props) {
             <button
               key={prompt.label}
               type="button"
-              className="rounded-full border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+              className="rounded-full border border-slate-300/80 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
               onClick={() => {
                 setQuestion(prompt.question);
                 setNoteText(prompt.note_text);
@@ -66,20 +66,20 @@ export function AskForm({ onSubmit, isSubmitting }: Props) {
 
       <div>
         <label className="mb-1 block text-sm font-medium text-slate-800">Question</label>
-        <textarea className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6 text-slate-800" rows={3} value={question} onChange={(e) => setQuestion(e.target.value)} required />
+        <textarea className="w-full rounded-lg border border-slate-300/80 bg-white px-3 py-2 text-sm leading-6 text-slate-800 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none" rows={3} value={question} onChange={(e) => setQuestion(e.target.value)} required />
       </div>
       <div>
         <label className="mb-1 block text-sm font-medium text-slate-800">Note text</label>
-        <textarea className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6 text-slate-800" rows={7} value={noteText} onChange={(e) => setNoteText(e.target.value)} required />
+        <textarea className="w-full rounded-lg border border-slate-300/80 bg-white px-3 py-2 text-sm leading-6 text-slate-800 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none" rows={7} value={noteText} onChange={(e) => setNoteText(e.target.value)} required />
       </div>
       <div>
         <label className="mb-1 block text-sm font-medium text-slate-800">Mode</label>
-        <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800" value={mode} onChange={(e) => setMode(e.target.value as AskRequest["mode"])}>
+        <select className="w-full rounded-lg border border-slate-300/80 bg-white px-3 py-2 text-sm text-slate-800 focus:border-slate-400 focus:outline-none" value={mode} onChange={(e) => setMode(e.target.value as AskRequest["mode"])}>
           <option value="strict">strict</option>
           <option value="hybrid">hybrid</option>
         </select>
       </div>
-      <button disabled={isSubmitting} className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-60">
+      <button disabled={isSubmitting} className="w-full rounded-lg border border-emerald-800 bg-emerald-800 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:opacity-60">
         {isSubmitting ? "Running..." : "Ask"}
       </button>
     </form>

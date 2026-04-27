@@ -10,7 +10,7 @@ Reusable inter-service HTTP client helpers.
 from __future__ import annotations
 
 import os
-from typing import Optional, Tuple, Type, TypeVar
+from typing import Any, Optional, Tuple, Type, TypeVar
 
 import httpx
 from pydantic import BaseModel
@@ -81,6 +81,46 @@ async def post_typed(
         return (parsed, resp, None)
     except Exception as e:
         return (None, resp, e)
+
+
+async def post_json(
+    client: httpx.AsyncClient,
+    url: str,
+    request_body: BaseModel,
+    timeout: float = DEFAULT_TIMEOUT,
+    trace_id: Optional[str] = None,
+) -> Tuple[Optional[Any], Optional[httpx.Response], Optional[Exception]]:
+    """
+    POST JSON body; on HTTP 200 return parsed JSON (dict/list/primitive), never a Pydantic model.
+
+    Returns:
+        (body, http_response, exception).
+        On 200 with valid JSON: (data, response, None).
+        On 200 with invalid JSON: (None, response, exception).
+        On non-200: (None, response, None).
+        On network error: (None, None, exception).
+    """
+    exc: Optional[Exception] = None
+    resp: Optional[httpx.Response] = None
+    try:
+        resp = await client.post(
+            url,
+            json=request_body.model_dump(),
+            headers=build_headers(trace_id),
+            timeout=timeout,
+        )
+    except Exception as e:
+        return (None, None, e)
+
+    if resp.status_code != 200:
+        return (None, resp, None)
+
+    try:
+        data = resp.json()
+    except Exception as e:
+        return (None, resp, e)
+
+    return (data, resp, None)
 
 
 def create_client(timeout: float = DEFAULT_TIMEOUT) -> httpx.AsyncClient:

@@ -5,14 +5,12 @@ from fastapi import FastAPI, HTTPException
 from app import engine
 from app.config import settings
 from app.targets import valid_target_ids
-from app.models.loader import ensure_target_loaded
 from services.shared.logging_util import structured_log_middleware
 from services.shared.schemas_v1 import HealthResponse, ScoreRequest, ScoreResponse
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    ensure_target_loaded("triage_severity")
     yield
 
 
@@ -27,7 +25,7 @@ async def health() -> HealthResponse:
 
 @app.post("/v1/score", response_model=ScoreResponse)
 async def score(request: ScoreRequest) -> ScoreResponse:
-    """Multi-target risk scoring: shared extraction, per-target models and thresholds."""
+    """Multi-target triage: deterministic rules (no ML weights)."""
     if request.targets:
         unknown = [t for t in request.targets if t not in valid_target_ids()]
         if unknown:

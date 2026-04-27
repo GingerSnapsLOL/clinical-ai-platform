@@ -4,17 +4,36 @@
   "pii_redacted": true,
   "answer": "Stubbed clinical assistant answer based on retrieved context.",
   "sources": [
-    {"source_id": "pubmed:1", "title": "Stub source", "score": 0.82}
+    {
+      "source_id": "pubmed:1",
+      "title": "Stub source",
+      "snippet": "Supporting passage text.",
+      "score": 0.82
+    }
+  ],
+  "citations": [
+    { "source_id": "pubmed:1", "title": "Stub source" }
   ],
   "entities": [
-    {"type": "DISEASE", "text": "diabetes", "start": 10, "end": 18}
+    { "type": "DISEASE", "text": "diabetes", "start": 10, "end": 18 }
   ],
-  "risk": {
+  "risk_block": {
     "score": 0.72,
     "label": "high",
-    "explanation": [
-      {"feature": "bp_high", "contribution": 0.18}
-    ]
+    "explanation": [{ "feature": "bp_high", "contribution": 0.18 }]
+  },
+  "diagnostics": {
+    "total_request_time_ms": 120.5,
+    "retrieval_time_ms": 40.0,
+    "llm_time_ms": 55.0,
+    "timings": {
+      "total_request_time_ms": 120.5,
+      "pii_service_duration_ms": 5.0,
+      "ner_service_duration_ms": 8.0,
+      "retrieval_service_duration_ms": 40.0,
+      "scoring_service_duration_ms": 12.0,
+      "llm_service_duration_ms": 55.0
+    }
   },
   "warnings": []
 }

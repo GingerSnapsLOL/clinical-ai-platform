@@ -20,12 +20,35 @@ logger = get_logger(__name__, "orchestrator")
 PRIMARY_TARGET = "triage_severity"
 # Must stay aligned with scoring-service registry (optional extras only).
 _OPTIONAL_TARGETS = frozenset({"cardiovascular_risk", "stroke_risk", "diabetes_risk"})
+_RELEVANT_ENTITY_TYPES = frozenset(
+    {
+        "SYMPTOM",
+        "DISEASE",
+        "CONDITION",
+        "FINDING",
+        "OBSERVATION",
+        "PROBLEM",
+        "DIAGNOSIS",
+    }
+)
 
 _MAX_REMOTE_CALLS = 1
 
 
 class ScoringAgent:
     """Target selection and score response shaping (no HTTP here)."""
+
+    @staticmethod
+    def has_relevant_entities(entities: list[EntityItem]) -> bool:
+        """Return True when at least one clinically relevant entity is present."""
+        for ent in entities:
+            et = str(ent.type or "").strip().upper()
+            if et in _RELEVANT_ENTITY_TYPES:
+                return True
+            txt = str(ent.text or "").strip()
+            if txt and len(txt) >= 3:
+                return True
+        return False
 
     @staticmethod
     def select_targets(signals: dict[str, Any] | None) -> list[str]:
@@ -101,12 +124,25 @@ class ScoringAgent:
             scores[tid] = {
                 "score": resp.score,
                 "label": resp.label,
-                "ready": True,
-                "detail": None,
-                "explanation": [e.model_dump() for e in resp.explanation],
+                "ready": resp.risk_available if tid == "triage_severity" else True,
+                "detail": None
+                if (tid != "triage_severity" or resp.risk_available)
+                else "insufficient_data",
+                "explanation": [e.model_dump() for e in resp.contributions],
             }
 
         primary_id = requested[0]
+        row = dict(scores.get(primary_id, {}))
+        scores[primary_id] = {
+            **row,
+            "score": resp.score,
+            "label": resp.label,
+            "explanation": [e.model_dump() for e in resp.contributions],
+        }
+        if primary_id == "triage_severity":
+            scores[primary_id]["ready"] = resp.risk_available
+            scores[primary_id]["detail"] = None if resp.risk_available else "insufficient_data"
+
         primary_row = scores[primary_id]
         primary = {"target": primary_id, **primary_row}
 
@@ -133,6 +169,18 @@ async def run_scoring_step(
     warnings: list[str] = []
     sf = dict(structured_features or {})
     sig = dict(signals or {})
+
+    if not ScoringAgent.has_relevant_entities(entities):
+        return AgentResult(
+            agent_id=AgentRole.SCORING,
+            ok=True,
+            confidence=0.0,
+            warnings=["scoring_skipped:no_relevant_entities"],
+            payload={},
+            error_detail=None,
+            duration_ms=monotonic_ms() - t0,
+            trace=trace,
+        )
 
     targets = ScoringAgent.select_targets(sig)
     trace["scoring_targets"] = list(targets)
@@ -186,7 +234,10 @@ async def run_scoring_step(
         trace["risk_label"] = primary_block.get("label")
         trace["overall_ready"] = overall_ready
 
-        conf = min(1.0, max(0.0, float(primary_block.get("score", 0.0)))) * input_quality
+        if score_data.confidence is not None:
+            conf = float(score_data.confidence) * input_quality
+        else:
+            conf = min(1.0, max(0.0, float(primary_block.get("score", 0.0)))) * input_quality
         if not overall_ready:
             conf *= 0.82
         if any("scoring_features_insufficient" in w for w in warnings):
@@ -200,6 +251,9 @@ async def run_scoring_step(
             "score": float(primary_block["score"]),
             "label": primary_block["label"],
             "explanation": primary_block.get("explanation") or [],
+            "risk_available": score_data.risk_available,
+            "confidence": score_data.confidence,
+            "risk_narrative": score_data.explanation,
         }
 
         return AgentResult(

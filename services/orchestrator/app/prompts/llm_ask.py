@@ -57,7 +57,12 @@ def build_llm_prompt(
             context_lines.append("")
             num_passages_used += 1
 
-    if risk is not None:
+    if (
+        risk is not None
+        and risk.risk_available
+        and risk.label is not None
+        and risk.score is not None
+    ):
         context_lines.append("")
         context_lines.append(
             "Risk assessment (not part of evidence passages — do not use in the answer "

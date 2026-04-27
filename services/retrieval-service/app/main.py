@@ -1,5 +1,6 @@
 import os
 import re
+import threading
 import uuid
 from typing import Any, Dict, List
 
@@ -27,6 +28,7 @@ CHUNK_MAX_TOKENS = 500
 _embed_model: SentenceTransformer | None = None
 _rerank_model: CrossEncoder | None = None
 _qdrant_client: QdrantClient | None = None
+_model_load_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -46,9 +48,21 @@ class IngestResponse(BaseModel):
     chunks_inserted: int
 
 
+def _ensure_models_loaded() -> None:
+    """Load embedding + rerank models on first use so /health is available during slow startup."""
+    global _embed_model, _rerank_model
+    if _embed_model is not None and _rerank_model is not None:
+        return
+    with _model_load_lock:
+        if _embed_model is not None and _rerank_model is not None:
+            return
+        _load_models()
+
+
 def embed_text(text: str) -> list[float]:
     """Embed text with the loaded model. Returns 384-dim vector (CPU only)."""
     global _embed_model
+    _ensure_models_loaded()
     if _embed_model is None:
         raise RuntimeError("Embedding model not loaded")
     vec = _embed_model.encode(text, convert_to_numpy=True)
@@ -152,7 +166,8 @@ def _load_models() -> None:
 
 @app.on_event("startup")
 async def startup() -> None:
-    _load_models()
+    # Qdrant only here — ST/CrossEncoder load is deferred (_ensure_models_loaded) so Docker
+    # healthchecks can pass while Hugging Face models download or deserialize from disk.
     init_qdrant_collection()
 
 

@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from services.shared.schemas_v1 import (
     AskRequest,
     AskResponse,
+    AskDiagnostics,
     EntityItem,
     ErrorInfo,
     ExtractRequest,
@@ -61,8 +62,32 @@ class TestAskResponse:
         assert r.status == "ok"
         assert r.pii_redacted is True
         assert r.sources == []
-        assert r.entities == []
-        assert r.risk is None
+        assert r.entities is None
+        assert r.risk_block is None
+
+    def test_legacy_risk_alias_in_json(self):
+        fc = FeatureContribution(feature="x", contribution=0.1)
+        raw = {
+            "status": "ok",
+            "trace_id": "t1",
+            "pii_redacted": True,
+            "answer": "a",
+            "sources": [],
+            "citations": [],
+            "risk": {"score": 0.5, "label": "low", "explanation": [fc.model_dump()]},
+            "warnings": [],
+        }
+        r = AskResponse.model_validate(raw)
+        assert r.risk_block is not None
+        assert r.risk_block.score == 0.5
+        assert r.risk_block.label == "low"
+
+    def test_diagnostics_roundtrip(self):
+        d = AskDiagnostics(total_request_time_ms=10.0, timings={"pii_service_duration_ms": 2.0})
+        r = AskResponse(trace_id="t1", answer="x", diagnostics=d)
+        dumped = r.model_dump(mode="json", exclude_none=True)
+        assert dumped["diagnostics"]["total_request_time_ms"] == 10.0
+        assert dumped["diagnostics"]["timings"]["pii_service_duration_ms"] == 2.0
 
 
 class TestRedactRequest:
@@ -140,11 +165,19 @@ class TestScoreRequest:
 class TestScoreResponse:
     def test_valid(self):
         fc = FeatureContribution(feature="f1", contribution=0.1)
-        r = ScoreResponse(trace_id="t1", score=0.72, label="high", explanation=[fc])
+        r = ScoreResponse(
+            trace_id="t1",
+            score=0.72,
+            label="high",
+            explanation="Elevated based on f1.",
+            contributions=[fc],
+            confidence=0.72,
+        )
         assert r.trace_id == "t1"
         assert r.score == 0.72
         assert r.label == "high"
-        assert len(r.explanation) == 1
+        assert r.explanation == "Elevated based on f1."
+        assert len(r.contributions) == 1
         assert r.target_results is None
 
 

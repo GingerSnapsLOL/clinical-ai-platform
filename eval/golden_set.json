@@ -1,0 +1,74 @@
+[
+  {
+    "question": "How is hypertension formally defined using office blood pressure readings?",
+    "expected_doc_ids": ["htn-def-001"]
+  },
+  {
+    "question": "What medication classes are considered first-line for treating uncomplicated hypertension?",
+    "expected_doc_ids": ["htn-firstline-002"]
+  },
+  {
+    "question": "What blood pressure goal should we aim for in most adults with hypertension?",
+    "expected_doc_ids": ["htn-target-003"]
+  },
+  {
+    "question": "How is resistant hypertension defined before escalating therapy?",
+    "expected_doc_ids": ["htn-resistant-004"]
+  },
+  {
+    "question": "Dietary sodium restriction and DASH-style eating pattern for blood pressure control",
+    "expected_doc_ids": ["htn-sodium-005", "htn-dash-006"]
+  },
+  {
+    "question": "Role of aerobic exercise in managing high blood pressure",
+    "expected_doc_ids": ["htn-exercise-007"]
+  },
+  {
+    "question": "Clinical pearls on prescribing lisinopril for hypertension",
+    "expected_doc_ids": ["ace-lisinopril-009"]
+  },
+  {
+    "question": "Patient developed a dry cough after starting an ACE inhibitor—what mechanism and next steps?",
+    "expected_doc_ids": ["ace-cough-012"]
+  },
+  {
+    "question": "ACE inhibitor use in patients with diabetes and kidney disease considerations",
+    "expected_doc_ids": ["ace-dm-014"]
+  },
+  {
+    "question": "When is losartan an appropriate choice for hypertension or renal protection?",
+    "expected_doc_ids": ["arb-losartan-015"]
+  },
+  {
+    "question": "Choosing between ARB and ACE inhibitor therapy—comparison and switching",
+    "expected_doc_ids": ["arb-ace-comp-018"]
+  },
+  {
+    "question": "What laboratory criteria are used to diagnose type 2 diabetes?",
+    "expected_doc_ids": ["dm-dx-020"]
+  },
+  {
+    "question": "First-line pharmacologic treatment for newly diagnosed type 2 diabetes",
+    "expected_doc_ids": ["dm-metformin-021"]
+  },
+  {
+    "question": "What HbA1c target is appropriate for most nonpregnant adults with diabetes?",
+    "expected_doc_ids": ["dm-hba1c-022"]
+  },
+  {
+    "question": "In type 2 diabetes with established cardiovascular disease, which drug classes have outcome benefit?",
+    "expected_doc_ids": ["dm-cvd-023"]
+  },
+  {
+    "question": "How do pooled cohort equations help estimate 10-year atherosclerotic cardiovascular risk?",
+    "expected_doc_ids": ["cvd-risk-calc-026"]
+  },
+  {
+    "question": "When should high-intensity statin therapy be used for primary or secondary prevention?",
+    "expected_doc_ids": ["cvd-statin-027"]
+  },
+  {
+    "question": "Elevated clinic blood pressure but normal home readings—how to interpret white-coat effect?",
+    "expected_doc_ids": ["htn-whitecoat-031"]
+  }
+]

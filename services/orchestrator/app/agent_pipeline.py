@@ -23,6 +23,7 @@ from app.agents.base import (
 from app.agents.coordinator import SupervisorCoordinator, SupervisorRunResult
 from services.shared.logging_util import get_logger
 from services.shared.schemas_v1 import (
+    AskDiagnostics,
     AskRequest,
     AskResponse,
     CitationItem,
@@ -54,12 +55,27 @@ def agent_pipeline_debug(request: AskRequest) -> bool:
 def _risk_from_run(run: SupervisorRunResult) -> RiskBlock | None:
     d = run.risk
     if not d or "score" not in d or "label" not in d:
+        if d and (d.get("label") == "insufficient_data" or d.get("risk_available") is False):
+            return RiskBlock(
+                risk_available=False,
+                confidence=d.get("confidence"),
+                rationale=d.get("risk_narrative") or "Risk assessment unavailable (insufficient data).",
+            )
         return None
+    if d.get("label") == "insufficient_data" or d.get("risk_available") is False:
+        return RiskBlock(
+            risk_available=False,
+            confidence=d.get("confidence"),
+            rationale=d.get("risk_narrative") or "Risk assessment unavailable (insufficient data).",
+        )
     expl = d.get("explanation") or []
     return RiskBlock(
         score=float(d["score"]),
         label=d["label"],
         explanation=[FeatureContribution.model_validate(x) for x in expl],
+        risk_available=True,
+        confidence=d.get("confidence"),
+        rationale=d.get("risk_narrative"),
     )
 
 
@@ -135,6 +151,21 @@ def _step_duration(run: SupervisorRunResult, agent_role: AgentRole) -> float | N
     return None
 
 
+def _scoring_diagnostics(run: SupervisorRunResult) -> dict[str, Any]:
+    scoring_step = next((s for s in run.steps if s.agent_id == AgentRole.SCORING.value), None)
+    if scoring_step is None:
+        return {"attempted": False, "skipped": True, "skip_reason": "no_scoring_step", "warnings": []}
+    payload = dict(scoring_step.payload or {})
+    return {
+        "attempted": not any(w == "scoring_skipped:no_relevant_entities" for w in scoring_step.warnings),
+        "skipped": any(w == "scoring_skipped:no_relevant_entities" for w in scoring_step.warnings),
+        "failed": not scoring_step.ok,
+        "warnings": list(scoring_step.warnings),
+        "label": payload.get("label"),
+        "risk_available": payload.get("risk_available"),
+    }
+
+
 async def run_supervised_ask(
     request: AskRequest,
     client: httpx.AsyncClient,
@@ -183,11 +214,19 @@ async def run_supervised_ask(
             answer="Insufficient data",
             entities=[],
             sources=[],
-            risk=None,
+            risk_block=None,
             warnings=[f"supervised_pipeline:{exc!s}"],
-            total_request_time_ms=total_ms,
             error=ErrorInfo(code="supervised_pipeline", message=str(exc)),
-            timings={"total_request_time_ms": total_ms},
+            diagnostics=(
+                AskDiagnostics(
+                    total_request_time_ms=total_ms,
+                    timings={"total_request_time_ms": total_ms},
+                    warnings=[f"supervised_pipeline:{exc!s}"],
+                    fallback_used=False,
+                )
+                if debug
+                else None
+            ),
         )
 
     _log_steps(trace_id, run, debug=debug)
@@ -203,16 +242,7 @@ async def run_supervised_ask(
     llm_ms = _step_duration(run, AgentRole.SYNTHESIS)
 
     total_ms = (time.perf_counter() - t0) * 1000.0
-    timings: dict[str, float] = {
-        "total_request_time_ms": total_ms,
-        "supervised_pipeline_flag": 1.0,
-    }
-    if retrieval_ms is not None:
-        timings["retrieval_agent_duration_ms"] = retrieval_ms
-    if llm_ms is not None:
-        timings["synthesis_agent_duration_ms"] = llm_ms
-    for i, step in enumerate(run.steps):
-        timings[f"agent_step_{i}_{step.agent_id}_ms"] = float(step.duration_ms)
+    scoring_diag = _scoring_diagnostics(run)
 
     logger.info(
         "agent_pipeline_summary",
@@ -226,17 +256,34 @@ async def run_supervised_ask(
         },
     )
 
+    diagnostics: AskDiagnostics | None = None
+    if debug:
+        diagnostics = AskDiagnostics(
+            total_request_time_ms=total_ms,
+            retrieval_time_ms=retrieval_ms,
+            llm_time_ms=llm_ms,
+            timings={
+                "total_request_time_ms": total_ms,
+                "pii_time_ms": 0.0,  # PII/NER are bundled inside clinical_structuring in supervisor mode.
+                "ner_time_ms": 0.0,
+                "retrieval_time_ms": float(retrieval_ms or 0.0),
+                "llm_time_ms": float(llm_ms or 0.0),
+            },
+            scoring_diagnostics=scoring_diag,
+            warnings=list(warnings),
+            fallback_used=False,
+        )
+        for i, step in enumerate(run.steps):
+            diagnostics.timings[f"agent_step_{i}_{step.agent_id}_ms"] = float(step.duration_ms)
+
     return AskResponse(
         trace_id=trace_id,
         pii_redacted=pii_redacted,
         answer=run.final_answer or "Insufficient data",
         entities=entities,
         sources=sources,
-        risk=risk,
+        risk_block=risk,
         citations=citations,
         warnings=warnings,
-        total_request_time_ms=total_ms,
-        retrieval_time_ms=retrieval_ms,
-        llm_time_ms=llm_ms,
-        timings=timings,
+        diagnostics=diagnostics,
     )

@@ -266,7 +266,12 @@ def _entities_block(entities: list[EntityItem]) -> str:
 
 
 def _risk_block(risk: RiskBlock | None) -> str:
-    if risk is None:
+    if (
+        risk is None
+        or not risk.risk_available
+        or risk.label is None
+        or risk.score is None
+    ):
         return ""
     lines = [
         "Risk assessment (auxiliary — not evidence; do not use unless same facts appear in passages):",
